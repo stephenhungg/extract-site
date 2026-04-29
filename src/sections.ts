@@ -40,9 +40,13 @@ export async function detectSections(page: Page): Promise<SectionInfo[]> {
     candidates.forEach((el, i) => {
       const r = el.getBoundingClientRect();
       const text = (el.textContent || '').trim().slice(0, 60);
+      // Prefer framer-name for the slug; fall back to text content.
+      const framerName = (el as HTMLElement).dataset?.framerName ||
+        (el.querySelector('[data-framer-name]') as HTMLElement | null)?.dataset.framerName;
+      const slugBase = framerName || text || el.tagName;
       results.push({
         index: i + 1,
-        slug: `${String(i + 1).padStart(2, '0')}-${slugify(text || el.tagName)}`,
+        slug: `${String(i + 1).padStart(2, '0')}-${slugify(slugBase)}`,
         selector: selectorFor(el),
         bbox: {
           x: Math.round(r.left + window.scrollX),
@@ -52,6 +56,7 @@ export async function detectSections(page: Page): Promise<SectionInfo[]> {
         },
         tag: el.tagName.toLowerCase(),
         textPreview: text,
+        framer: framerName,
       });
     });
     return results;

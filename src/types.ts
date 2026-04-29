@@ -17,9 +17,13 @@ export interface AnimatedElement {
   tag: string;
   classes: string[];
   text?: string;
+  framerName?: string;
+  // bbox in document coordinates (top + scrollY); used to link to sections.
+  bbox?: { x: number; y: number; w: number; h: number };
   // CSS-derived
   cssTransition?: string;
   cssAnimation?: string;
+  cssTransitionProperty?: string;
   cssTimingFunction?: string;
   cssDuration?: string;
   cssDelay?: string;
@@ -34,8 +38,29 @@ export interface AnimatedElement {
     whileHover?: any;
     whileInView?: any;
   };
+  // v0.4: linked + classified
+  sectionSlug?: string;
   sectionIndex?: number;
+  classification?: AnimationKind[];
 }
+
+// Heuristic taxonomy. An element can have multiple tags (e.g. fade-up = fade + slide-up).
+export type AnimationKind =
+  | 'fade'
+  | 'slide-up'
+  | 'slide-down'
+  | 'slide-left'
+  | 'slide-right'
+  | 'scale'
+  | 'rotate'
+  | 'parallax'
+  | 'sticky'
+  | 'marquee'
+  | 'char-stagger'
+  | 'sibling-stagger'
+  | 'hover-only'
+  | 'scroll-linked'
+  | 'unclassified';
 
 export interface CDPAnimation {
   id: string;
@@ -45,6 +70,28 @@ export interface CDPAnimation {
   easing: string;
   iterations: number;
   keyframes?: Array<{ offset: number; easing?: string; computedOffset?: number }>;
+  // v0.4 — resolved post-capture from backendNodeId
+  backendNodeId?: number;
+  bbox?: { x: number; y: number; w: number; h: number };
+  tag?: string;
+  framerName?: string;
+  text?: string;
+  sectionSlug?: string;
+  classification?: AnimationKind[];
+}
+
+export interface HoverState {
+  selector: string;
+  framerName?: string;
+  sectionSlug?: string;
+  bbox: { x: number; y: number; w: number; h: number };
+  text?: string;
+  // Style diffs, only the keys that changed
+  delta: Record<string, { from: string; to: string }>;
+  // Transition props on the element so the rebuild knows the timing.
+  transition?: string;
+  duration?: string;
+  easing?: string;
 }
 
 export interface DetectedStack {

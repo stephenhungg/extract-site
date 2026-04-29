@@ -13,8 +13,17 @@ import {
   detectStack,
   scanComputedTransitions,
   captureCDPAnimations,
+  resolveCDPAnimationNodes,
+  linkAnimationsToSections,
+  classifyAnimatedElement,
+  classifyCDPAnimation,
+  tagStaggerGroups,
+  tagCDPStaggerGroups,
+  detectCharStagger,
+  summarizeSectionMotion,
   writeMotionArtifacts,
 } from './motion.ts';
+import { captureHoverStates, writeHoverArtifacts } from './hover.ts';
 import { extractTokens, writeTokenArtifacts, extractCSSVars } from './tokens.ts';
 import { detectSections, captureSectionScreenshots } from './sections.ts';
 import { writeRebuildMd, writeStackMd } from './rebuild.ts';
@@ -82,15 +91,23 @@ async function main() {
 
   const assets = createAssetCollector(page, opts.outDir);
 
-  console.log('▶ phase 1: navigate + sampled scroll');
+  console.log('▶ phase 1: navigate');
   await page.goto(opts.url, { waitUntil: 'networkidle', timeout: 60000 }).catch(async () => {
     console.warn('  ⚠️  networkidle timeout, falling back to load');
     await page.goto(opts.url, { waitUntil: 'load', timeout: 60000 });
   });
   await page.waitForTimeout(2000);
+
+  // CDP capture has to happen FIRST scroll-through, otherwise framer-motion's
+  // `whileInView`/`once` triggers won't fire again on subsequent passes.
+  console.log('\n▶ phase 1b: CDP animation capture (during scroll)');
+  const cdp = await context.newCDPSession(page);
+  const cdpRaw = await captureCDPAnimations(cdp, page, 12000);
+  console.log(`  🎞  ${cdpRaw.length} CDP animations fired during initial scroll`);
+
   // Sampled scroll: captures viewport screenshots + lazy-image deltas + visible
-  // framer-named regions at every scroll step. Replaces a bare autoScroll so we
-  // record what enters the page over time, not just the end state.
+  // framer-named regions at every scroll step.
+  console.log('\n▶ phase 1c: sampled scroll capture');
   const scrollSamples = await sampledScrollCapture(page, opts.outDir);
 
   const pageTitle = await page.title();
@@ -112,15 +129,30 @@ async function main() {
   const cssVars = await extractCSSVars(page).catch(() => []);
   await writeTokenArtifacts(opts.outDir, tokens, cssVars);
 
-  console.log('\n▶ phase 5: motion (CDP + computed scan)');
-  const cdp = await context.newCDPSession(page);
-  const cdpAnimations = await captureCDPAnimations(cdp, page, 12000);
-  const computed = await scanComputedTransitions(page);
-  await writeMotionArtifacts(opts.outDir, computed, cdpAnimations, stack);
-
-  console.log('\n▶ phase 6: section detection + per-section captures');
+  console.log('\n▶ phase 5: section detection + per-section captures');
   const sections = await detectSections(page);
   await captureSectionScreenshots(page, opts.outDir, sections, opts.viewports);
+
+  console.log('\n▶ phase 6: classify + link motion to sections');
+  console.log(`  🎞  resolving ${new Set(cdpRaw.map((a) => a.backendNodeId).filter(Boolean)).size} CDP node ids → bbox`);
+  const cdpResolved = await resolveCDPAnimationNodes(cdp, cdpRaw);
+  let computed = await scanComputedTransitions(page);
+
+  // classify + tag stagger groups + char stagger (CSS path)
+  for (const a of computed) a.classification = classifyAnimatedElement(a);
+  computed = tagStaggerGroups(computed);
+  computed = detectCharStagger(computed);
+  for (const a of cdpResolved) a.classification = classifyCDPAnimation(a);
+
+  // link both to sections by bbox containment
+  const computedLinked = linkAnimationsToSections(computed, sections);
+  let cdpLinked = linkAnimationsToSections(cdpResolved, sections);
+
+  // CDP-based stagger detection (catches framer-motion WAAPI char-stagger that
+  // CSS scan can't see). Has to run AFTER section linking.
+  cdpLinked = tagCDPStaggerGroups(cdpLinked);
+
+  await writeMotionArtifacts(opts.outDir, computedLinked, cdpLinked, stack);
 
   console.log('\n▶ phase 7: deep content extraction (text, images, bg, framer attrs)');
   const sectionContents = await extractSectionContent(page, sections);
@@ -131,7 +163,20 @@ async function main() {
   const layouts = await extractSectionLayouts(page, sections);
   await writeLayoutArtifacts(opts.outDir, layouts);
 
-  console.log('\n▶ phase 9: finalize artifacts + @font-face');
+  console.log('\n▶ phase 9: hover-state capture (cursor:pointer + buttons/links)');
+  const hovers = await captureHoverStates(page, sections, 5).catch((e) => {
+    console.warn('  ⚠️  hover capture failed:', (e as Error).message);
+    return [];
+  });
+  await writeHoverArtifacts(opts.outDir, hovers);
+
+  console.log('\n▶ phase 10: per-section motion summary + finalize artifacts');
+  const sectionMotion = summarizeSectionMotion(sections, computedLinked, cdpLinked, hovers);
+  await writeFile(
+    join(opts.outDir, 'motion', 'per-section.json'),
+    JSON.stringify(sectionMotion, null, 2),
+    'utf8'
+  );
   await assets.finalize();
   await writeContentArtifacts(opts.outDir, sectionContents, augmentedManifest);
   await generateFontFaceCSS(opts.outDir);
@@ -145,11 +190,11 @@ async function main() {
     pageTitle,
     stack,
     sectionCount: sections.length,
-    animationCount: computed.length + cdpAnimations.length,
+    animationCount: computedLinked.length + cdpLinked.length,
     assetCount: assets.manifest.length,
   };
   await writeFile(join(opts.outDir, 'meta.json'), JSON.stringify(meta, null, 2), 'utf8');
-  await writeRebuildMd(opts.outDir, meta, sections, sectionContents);
+  await writeRebuildMd(opts.outDir, meta, sections, sectionContents, sectionMotion, hovers);
 
   await context.close();
   await browser.close();

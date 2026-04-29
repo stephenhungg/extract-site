@@ -1,13 +1,16 @@
 import { writeFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
-import type { Meta, SectionInfo, DetectedStack } from './types.ts';
+import type { Meta, SectionInfo, DetectedStack, HoverState } from './types.ts';
 import type { SectionContent } from './content.ts';
+import type { SectionMotionSummary } from './motion.ts';
 
 export async function writeRebuildMd(
   outDir: string,
   meta: Meta,
   sections: SectionInfo[],
-  contents: SectionContent[] = []
+  contents: SectionContent[] = [],
+  motion: SectionMotionSummary[] = [],
+  hovers: HoverState[] = []
 ) {
   const stack = meta.stack;
   const recommended = recommendedStack(stack);
@@ -59,9 +62,18 @@ export async function writeRebuildMd(
   lines.push(`> Every section below has its **exact text, images, fonts, and computed styles** captured. Do not rewrite copy. Do not pick new assets. Do not invent font sizes. Use what's here.\n`);
 
   const contentBySlug = new Map(contents.map((c) => [c.slug, c]));
+  const motionBySlug = new Map(motion.map((m) => [m.slug, m]));
+  const hoversBySlug = new Map<string, HoverState[]>();
+  for (const h of hovers) {
+    if (!h.sectionSlug) continue;
+    if (!hoversBySlug.has(h.sectionSlug)) hoversBySlug.set(h.sectionSlug, []);
+    hoversBySlug.get(h.sectionSlug)!.push(h);
+  }
 
   for (const s of sections) {
     const c = contentBySlug.get(s.slug);
+    const m = motionBySlug.get(s.slug);
+    const sectionHovers = hoversBySlug.get(s.slug) || [];
     lines.push(`\n### ${s.index}. \`${s.slug}\``);
     if (c?.framer.name) lines.push(`*framer name: ${c.framer.name}*`);
     lines.push('');
@@ -70,6 +82,25 @@ export async function writeRebuildMd(
     lines.push(`- screenshot (mobile): \`screenshots/sections/${s.slug}-mobile.png\``);
     lines.push(`- dom subtree: \`dom/sections/${s.slug}.html\``);
     lines.push(`- structural layout tree: \`content/layouts.json\` → find \`"slug": "${s.slug}"\``);
+
+    // Motion block — the v0.4 payoff. Concrete instructions per section.
+    if (m && (m.notable.length || m.cdpFired || m.totalAnimated)) {
+      lines.push('');
+      lines.push(`**Motion (${m.totalAnimated} animated · ${m.cdpFired} fired during scroll):**`);
+      if (m.dominantEasing && m.dominantDurationMs) {
+        lines.push(`- defaults: ${m.dominantDurationMs}ms × \`${m.dominantEasing}\``);
+      }
+      for (const n of m.notable) lines.push(`- ${n}`);
+    }
+    if (sectionHovers.length) {
+      lines.push('');
+      lines.push(`**Hover states (${sectionHovers.length}):**`);
+      for (const h of sectionHovers) {
+        const props = Object.keys(h.delta).slice(0, 4).join(', ');
+        const text = h.text ? `"${h.text}"` : (h.framerName ? `\`${h.framerName}\`` : `\`${h.selector.split(' > ').pop()}\``);
+        lines.push(`- ${text} — changes: ${props} — ${h.duration} \`${h.easing}\``);
+      }
+    }
     if (!c) continue;
 
     if (c.text.labels.length) {
