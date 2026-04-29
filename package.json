@@ -1,0 +1,21 @@
+{
+  "name": "extract-site",
+  "version": "0.1.0",
+  "description": "Reverse-engineer any website (especially Framer sites) into a reference/ folder of static + motion + assets, ready for Claude Code to rebuild.",
+  "type": "module",
+  "bin": {
+    "extract-site": "./bin/extract-site"
+  },
+  "scripts": {
+    "extract": "bun src/extract.ts"
+  },
+  "dependencies": {
+    "playwright": "^1.48.0",
+    "sharp": "^0.33.5",
+    "culori": "^4.0.1"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.6.0"
+  }
+}
