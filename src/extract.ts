@@ -17,6 +17,14 @@ import {
 import { extractTokens, writeTokenArtifacts } from './tokens.ts';
 import { detectSections, captureSectionScreenshots } from './sections.ts';
 import { writeRebuildMd, writeStackMd } from './rebuild.ts';
+import {
+  extractSectionContent,
+  linkAssetsToSections,
+  writeContentArtifacts,
+  harvestBackgroundImages,
+} from './content.ts';
+import { extractSectionLayouts, writeLayoutArtifacts } from './layout.ts';
+import { generateFontFaceCSS } from './fonts.ts';
 import type { ExtractOptions, Viewport, Meta } from './types.ts';
 
 const DEFAULT_VIEWPORTS: Viewport[] = [
@@ -109,8 +117,19 @@ async function main() {
   const sections = await detectSections(page);
   await captureSectionScreenshots(page, opts.outDir, sections, opts.viewports);
 
-  console.log('\n▶ phase 7: finalize artifacts');
+  console.log('\n▶ phase 7: deep content extraction (text, images, bg, framer attrs)');
+  const sectionContents = await extractSectionContent(page, sections);
+  await harvestBackgroundImages(page, opts.outDir, assets.manifest);
+  const augmentedManifest = linkAssetsToSections(assets.manifest, sectionContents);
+
+  console.log('\n▶ phase 8: structural layout trees per section');
+  const layouts = await extractSectionLayouts(page, sections);
+  await writeLayoutArtifacts(opts.outDir, layouts);
+
+  console.log('\n▶ phase 9: finalize artifacts + @font-face');
   await assets.finalize();
+  await writeContentArtifacts(opts.outDir, sectionContents, augmentedManifest);
+  await generateFontFaceCSS(opts.outDir);
   await writeStackMd(opts.outDir, stack);
 
   const meta: Meta = {
@@ -125,7 +144,7 @@ async function main() {
     assetCount: assets.manifest.length,
   };
   await writeFile(join(opts.outDir, 'meta.json'), JSON.stringify(meta, null, 2), 'utf8');
-  await writeRebuildMd(opts.outDir, meta, sections);
+  await writeRebuildMd(opts.outDir, meta, sections, sectionContents);
 
   await context.close();
   await browser.close();

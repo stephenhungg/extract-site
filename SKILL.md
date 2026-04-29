@@ -1,6 +1,6 @@
 ---
 name: extract-site
-version: 0.1.0
+version: 0.2.0
 description: |
   Reverse-engineer any website (especially Framer sites) into a structured reference/ folder
   containing static DOM, screenshots, motion specs (durations + easing curves + framer-motion

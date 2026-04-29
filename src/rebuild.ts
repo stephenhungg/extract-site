@@ -1,11 +1,13 @@
 import { writeFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import type { Meta, SectionInfo, DetectedStack } from './types.ts';
+import type { SectionContent } from './content.ts';
 
 export async function writeRebuildMd(
   outDir: string,
   meta: Meta,
-  sections: SectionInfo[]
+  sections: SectionInfo[],
+  contents: SectionContent[] = []
 ) {
   const stack = meta.stack;
   const recommended = recommendedStack(stack);
@@ -41,22 +43,85 @@ export async function writeRebuildMd(
   lines.push(`└── stack/detected.md          # framework detection notes`);
   lines.push(`\`\`\`\n`);
 
-  lines.push(`## Rules of engagement\n`);
-  lines.push(`1. **Build section-by-section.** Hero first. Don't move on until the section matches \`screenshots/sections/01-*-desktop.png\` AND \`-tablet.png\` AND \`-mobile.png\`.`);
-  lines.push(`2. **For motion: use EXACT values from \`motion/motion-specs.md\`.** Do not invent durations or easings. If the file says \`cubic-bezier(0.16, 1, 0.3, 1)\`, use that — not "ease-out".`);
-  lines.push(`3. **For tokens: import \`tokens/tokens.css\`.** Don't pick new colors, font sizes, or spacing values.`);
-  lines.push(`4. **For assets: copy from \`assets/\`** to your project's \`public/\` (or wherever). Don't regenerate or substitute stock photos.`);
-  lines.push(`5. **After each section: screenshot diff.** Build the section, take a screenshot at 1440×900, place it next to the reference, and visually diff. Fix any mismatches before the next section.`);
-  lines.push(`6. **Smooth scroll**: ${stack.lenis ? 'the source uses Lenis — install `lenis` and wire it up at the root.' : 'consider adding Lenis for that "Framer feel" if the source has any scroll-linked motion.'}`);
+  lines.push(`## Rules of engagement (95%+ fidelity required)\n`);
+  lines.push(`This is a **1:1 reproduction**, not a "spiritually similar" rebuild. Concrete rules:\n`);
+  lines.push(`1. **Use the actual text.** Every headline, paragraph, button label, link is in \`content/text.md\` and \`content/sections.json\`. Do not paraphrase, do not "improve" copy, do not make up filler.`);
+  lines.push(`2. **Use the actual images.** Each image's role and target file is in the section blocks above. Copy from \`assets/images/\` into your project's \`public/\` and reference by the same filename. If a section has a hero image, your section MUST have that exact image — not a CSS gradient stand-in.`);
+  lines.push(`3. **Use the actual fonts.** \`tokens/fonts.css\` has \`@font-face\` declarations for every captured woff2/ttf. Import it. Don't substitute Google Fonts unless the source font wasn't captured.`);
+  lines.push(`4. **For motion: EXACT values from \`motion/motion-specs.md\`.** No "ease-out", no "0.5s". Use the bezier arrays and durations as captured.`);
+  lines.push(`5. **For tokens: import \`tokens/tokens.css\`.** Don't pick new colors, font sizes, or spacing values.`);
+  lines.push(`6. **Build section-by-section.** Don't move on until your section matches the reference at all 3 viewports. Screenshot diff after each.`);
+  lines.push(`7. **Use the layout tree.** \`content/layouts.json\` has the structural skeleton — flex/grid directions, gaps, child order. Match it.`);
+  lines.push(`8. **Smooth scroll**: ${stack.lenis ? 'the source uses Lenis — install `lenis` and wire it up at the root.' : 'consider adding Lenis for that "Framer feel" if the source has any scroll-linked motion.'}`);
+  lines.push(`9. **No placeholder content.** No "Lorem ipsum", no "Project Name", no fake stats. The real numbers, names, and copy are extracted.`);
 
-  lines.push(`\n## Sections (build in this order)\n`);
-  lines.push(`| # | Slug | Tag | Preview | Desktop | Tablet | Mobile |`);
-  lines.push(`|---|------|-----|---------|---------|--------|--------|`);
+  lines.push(`\n## Sections — exact content (build verbatim)\n`);
+  lines.push(`> Every section below has its **exact text, images, fonts, and computed styles** captured. Do not rewrite copy. Do not pick new assets. Do not invent font sizes. Use what's here.\n`);
+
+  const contentBySlug = new Map(contents.map((c) => [c.slug, c]));
+
   for (const s of sections) {
-    const preview = (s.textPreview || '').replace(/\|/g, '\\|').replace(/\s+/g, ' ').slice(0, 50);
-    lines.push(
-      `| ${s.index} | \`${s.slug}\` | \`${s.tag}\` | ${preview} | ${`screenshots/sections/${s.slug}-desktop.png`} | ${`screenshots/sections/${s.slug}-tablet.png`} | ${`screenshots/sections/${s.slug}-mobile.png`} |`
-    );
+    const c = contentBySlug.get(s.slug);
+    lines.push(`\n### ${s.index}. \`${s.slug}\``);
+    if (c?.framer.name) lines.push(`*framer name: ${c.framer.name}*`);
+    lines.push('');
+    lines.push(`- screenshot (desktop): \`screenshots/sections/${s.slug}-desktop.png\``);
+    lines.push(`- screenshot (tablet): \`screenshots/sections/${s.slug}-tablet.png\``);
+    lines.push(`- screenshot (mobile): \`screenshots/sections/${s.slug}-mobile.png\``);
+    lines.push(`- dom subtree: \`dom/sections/${s.slug}.html\``);
+    lines.push(`- structural layout tree: \`content/layouts.json\` → find \`"slug": "${s.slug}"\``);
+    if (!c) continue;
+
+    if (c.text.labels.length) {
+      lines.push(`- **labels (small/uppercase):** ${c.text.labels.map((l) => `\`${l}\``).join(' · ')}`);
+    }
+    if (c.text.headings.length) {
+      lines.push(`\n**Headings:**`);
+      for (const h of c.text.headings) {
+        lines.push(
+          `- h${h.level}: "${h.text}" — ${h.style.fontSize} / ${h.style.fontWeight} / ${h.style.color} / family: \`${h.style.fontFamily.split(',')[0]}\`${h.style.fontStyle === 'italic' ? ' / italic' : ''}`
+        );
+      }
+    }
+    if (c.text.paragraphs.length) {
+      lines.push(`\n**Paragraphs:**`);
+      for (const p of c.text.paragraphs.slice(0, 8)) {
+        lines.push(`- "${p.text}" — ${p.style.fontSize} / ${p.style.color}`);
+      }
+    }
+    if (c.text.buttons.length) {
+      lines.push(`\n**Buttons:** ${c.text.buttons.map((b) => `\`${b.text}\``).join(' · ')}`);
+    }
+    if (c.text.links.length) {
+      const uniqLinks = Array.from(new Set(c.text.links.map((l) => l.text))).slice(0, 12);
+      lines.push(`\n**Links:** ${uniqLinks.map((l) => `\`${l}\``).join(' · ')}`);
+    }
+    if (c.images.length) {
+      lines.push(`\n**Images (${c.images.length}):**`);
+      for (const img of c.images.slice(0, 8)) {
+        const local = img.src.split('/').pop()?.split('?')[0];
+        lines.push(
+          `- \`${local}\` — ${img.role}, ${img.bbox.width}×${img.bbox.height}${img.alt ? ` — alt: "${img.alt}"` : ''} → \`assets/images/${local}\``
+        );
+      }
+    }
+    if (c.videos.length) {
+      lines.push(`\n**Videos:**`);
+      for (const v of c.videos) {
+        const local = v.src.split('/').pop()?.split('?')[0];
+        lines.push(`- \`${local}\` — ${v.bbox.width}×${v.bbox.height} → \`assets/videos/${local}\``);
+      }
+    }
+    if (c.backgrounds.length) {
+      lines.push(`\n**CSS background-image urls:**`);
+      for (const b of c.backgrounds.slice(0, 5)) {
+        const local = b.url.split('/').pop()?.split('?')[0];
+        lines.push(`- on \`${b.selector}\`: \`${local}\``);
+      }
+    }
+    if (c.svgs.length) {
+      lines.push(`\n**Inline SVGs:** ${c.svgs.length} (full markup in \`content/sections.json\`)`);
+    }
   }
 
   lines.push(`\n## Per-section build prompt (paste into Claude Code)\n`);
