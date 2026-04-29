@@ -87,6 +87,14 @@ export interface AssetManifestEntry {
   type: 'image' | 'video' | 'font' | 'audio' | 'other';
   bytes: number;
   mime: string;
+  // Magic-byte validated. `format` is the canonical detected format, `ok`
+  // is false if bytes were truncated / corrupt / didn't match any known
+  // signature (in that case localPath points into assets/_failed/).
+  format?: string;
+  ok?: boolean;
+  failReason?: string;
+  // Section slugs that referenced this asset (filled in later).
+  usedIn?: string[];
 }
 
 export interface Meta {

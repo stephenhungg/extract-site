@@ -3,6 +3,7 @@ import { writeFile, mkdir } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 import { createHash } from 'node:crypto';
 import type { AssetManifestEntry, Viewport } from './types.ts';
+import { validateAsset } from './validate.ts';
 
 export async function autoScroll(page: Page, opts: { stepPx?: number; pauseMs?: number } = {}) {
   const stepPx = opts.stepPx ?? 600;
@@ -77,15 +78,38 @@ export function createAssetCollector(page: Page, outDir: string): AssetCollector
       const buf = await response.body().catch(() => null);
       if (!buf) return;
 
-      const ext = extractExt(url, mime);
+      // Magic-byte validate. The detected ext beats both URL and mime —
+      // framer often serves transcoded bytes (jpg url → webp body) and a
+      // mismatched extension breaks downstream Read/Anthropic API calls.
+      const v = validateAsset(buf, url);
+      const fallbackExt = extractExt(url, mime);
+      const finalExt = v.ext || fallbackExt;
       const hash = createHash('md5').update(url).digest('hex').slice(0, 8);
-      const safeName = sanitize(new URL(url).pathname.split('/').pop() || 'asset') + (ext ? '' : '');
-      const filename = `${hash}-${safeName}${ext && !safeName.endsWith(ext) ? ext : ''}`;
-      const dir = join(outDir, 'assets', bucket === 'image' ? 'images' : bucket === 'video' ? 'videos' : bucket === 'font' ? 'fonts' : 'audio');
-      await mkdir(dir, { recursive: true });
-      const localPath = join(dir, filename);
+      const baseName = sanitize(new URL(url).pathname.split('/').pop() || 'asset').replace(/\.[a-z0-9]+$/i, '');
+      const filename = `${hash}-${baseName}${finalExt}`;
+
+      const bucketDir = bucket === 'image' ? 'images' : bucket === 'video' ? 'videos' : bucket === 'font' ? 'fonts' : 'audio';
+      const okDir = join(outDir, 'assets', bucketDir);
+      const failDir = join(outDir, 'assets', '_failed', bucketDir);
+      const targetDir = v.ok ? okDir : failDir;
+      await mkdir(targetDir, { recursive: true });
+      const localPath = join(targetDir, filename);
       await writeFile(localPath, buf);
-      manifest.push({ originalUrl: url, localPath, type: bucket, bytes: buf.length, mime });
+
+      if (!v.ok) {
+        console.warn(`  ⚠️  invalid ${bucket} (${v.format}): ${v.reason} — quarantined: ${filename}`);
+      }
+
+      manifest.push({
+        originalUrl: url,
+        localPath,
+        type: bucket,
+        bytes: buf.length,
+        mime,
+        format: v.format,
+        ok: v.ok,
+        ...(v.reason ? { failReason: v.reason } : {}),
+      });
       seen.add(url);
     } catch {
       // ignore — assets that fail are not the end of the world
@@ -102,7 +126,25 @@ export function createAssetCollector(page: Page, outDir: string): AssetCollector
         JSON.stringify(manifest, null, 2),
         'utf8'
       );
-      console.log(`  🎁 ${manifest.length} assets harvested`);
+      const failed = manifest.filter((m) => m.ok === false);
+      const ok = manifest.length - failed.length;
+      console.log(`  🎁 ${ok} valid + ${failed.length} quarantined = ${manifest.length} assets`);
+      if (failed.length) {
+        const lines: string[] = [
+          '# Quarantined assets',
+          '',
+          'These responses failed magic-byte validation. Anything in here is unsafe',
+          'to feed downstream tools (image readers, the Anthropic API, etc.) and is',
+          'kept only for forensic purposes — do NOT reference these from a rebuild.',
+          '',
+        ];
+        for (const f of failed) {
+          lines.push(`- \`${f.localPath.split('/assets/')[1]}\` — ${f.format} (${f.bytes}b) — ${f.failReason}`);
+          lines.push(`  url: ${f.originalUrl}`);
+        }
+        await mkdir(join(outDir, 'assets', '_failed'), { recursive: true });
+        await writeFile(join(outDir, 'assets', '_failed', 'README.md'), lines.join('\n'), 'utf8');
+      }
     },
   };
 }
