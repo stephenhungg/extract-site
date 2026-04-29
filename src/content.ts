@@ -18,8 +18,29 @@ export interface SectionContent {
     links: { text: string; href: string; classes: string[] }[];
     labels: string[]; // small uppercase eyebrows / chips
   };
-  images: { src: string; alt: string; bbox: BBox; role: string; localPath?: string }[];
-  videos: { src: string; poster?: string; bbox: BBox; localPath?: string }[];
+  images: {
+    src: string;
+    alt: string;
+    bbox: BBox;
+    role: string;
+    localPath?: string;
+    srcset?: string;
+    srcsetEntries?: { url: string; descriptor: string }[];
+    sizes?: string;
+    loading?: string;
+    decoding?: string;
+  }[];
+  videos: {
+    src: string;
+    poster?: string;
+    bbox: BBox;
+    localPath?: string;
+    autoplay?: boolean;
+    loop?: boolean;
+    muted?: boolean;
+    playsInline?: boolean;
+    duration?: number;
+  }[];
   backgrounds: { selector: string; url: string; localPath?: string }[];
   svgs: { id?: string; outerHTML: string }[];
 }
@@ -162,6 +183,15 @@ export async function extractSectionContent(
       });
 
       // images
+      function parseSrcset(s: string) {
+        if (!s) return [] as { url: string; descriptor: string }[];
+        return s.split(',').map((entry) => {
+          const trimmed = entry.trim();
+          const sp = trimmed.lastIndexOf(' ');
+          if (sp === -1) return { url: trimmed, descriptor: '' };
+          return { url: trimmed.slice(0, sp), descriptor: trimmed.slice(sp + 1) };
+        });
+      }
       const images: any[] = [];
       root.querySelectorAll('img').forEach((img) => {
         const el = img as HTMLImageElement;
@@ -174,12 +204,21 @@ export async function extractSectionContent(
             : bbox.width > 200
             ? 'medium'
             : 'small';
-        images.push({
+        const srcset = el.srcset || '';
+        const out: any = {
           src: el.currentSrc || el.src,
           alt: el.alt || '',
           bbox,
           role,
-        });
+        };
+        if (srcset) {
+          out.srcset = srcset;
+          out.srcsetEntries = parseSrcset(srcset);
+        }
+        if (el.sizes) out.sizes = el.sizes;
+        if (el.loading) out.loading = el.loading;
+        if (el.decoding) out.decoding = el.decoding;
+        images.push(out);
       });
 
       // videos
@@ -193,7 +232,16 @@ export async function extractSectionContent(
           (el.querySelector('source') as HTMLSourceElement | null)?.src ||
           '';
         if (!src) return;
-        videos.push({ src, poster: el.poster, bbox: bboxOf(el) });
+        videos.push({
+          src,
+          poster: el.poster,
+          bbox: bboxOf(el),
+          autoplay: el.autoplay,
+          loop: el.loop,
+          muted: el.muted,
+          playsInline: el.playsInline,
+          duration: isFinite(el.duration) ? el.duration : undefined,
+        });
       });
 
       // background images via computed style scan

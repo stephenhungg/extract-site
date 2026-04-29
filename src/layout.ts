@@ -19,11 +19,32 @@ export interface LayoutNode {
   zIndex: string;
   textPreview?: string;
   imgSrc?: string;
+  imgSrcset?: string;
   isImage?: boolean;
   isText?: boolean;
   fontSize?: string;
+  fontWeight?: string;
+  fontFamily?: string;
+  lineHeight?: string;
+  letterSpacing?: string;
+  textTransform?: string;
   color?: string;
   bgColor?: string;
+  // Frontier visual styling — what makes the difference between generic
+  // and "looks like the source":
+  borderRadius?: string;          // e.g. "16px" or "16px 16px 0 0"
+  border?: string;                // shorthand: "1px solid rgb(...)"
+  boxShadow?: string;             // captured raw — e.g. "0 24px 48px rgba(0,0,0,0.4)"
+  backdropFilter?: string;        // e.g. "blur(20px)"
+  filter?: string;                // e.g. "blur(2px) brightness(1.1)"
+  transform?: string;             // resting transform (matrix or composed)
+  opacity?: string;               // !== "1"
+  bgImage?: string;               // raw computed background-image value (incl. gradients)
+  gradient?: { kind: 'linear' | 'radial' | 'conic'; stops: { color: string; pos?: string }[]; direction?: string };
+  padding?: string;               // shorthand
+  margin?: string;                // shorthand (rare, but sometimes load-bearing)
+  overflow?: string;
+  cursor?: string;                // marks "interactive" elements for hover capture later
   children: LayoutNode[];
 }
 
@@ -72,6 +93,31 @@ export async function extractSectionLayouts(
       }
       return false;
     }
+    function parseGradient(bg: string) {
+      // Match the FIRST gradient in background-image. Most framer elements
+      // use a single gradient; layered gradients are rare and we keep the
+      // raw string in bgImage for fidelity.
+      const m = bg.match(/(linear|radial|conic)-gradient\(([^)]*(?:\([^)]*\)[^)]*)*)\)/);
+      if (!m) return null;
+      const kind = m[1] as 'linear' | 'radial' | 'conic';
+      const inner = m[2];
+      // direction = first chunk if it doesn't start with a color
+      const parts = inner.split(/,(?![^()]*\))/).map((s) => s.trim());
+      let direction: string | undefined;
+      let stops = parts;
+      if (parts.length && /^(to |[\d.]+(deg|rad|turn|%)|from |at )/i.test(parts[0])) {
+        direction = parts[0];
+        stops = parts.slice(1);
+      }
+      return {
+        kind,
+        direction,
+        stops: stops.map((s) => {
+          const sm = s.match(/^(.+?)(?:\s+([\d.]+(?:%|px|em|rem)))?\s*$/);
+          return sm ? { color: sm[1].trim(), pos: sm[2] } : { color: s };
+        }),
+      };
+    }
     function walk(el: Element, depth: number): any {
       const cs = getComputedStyle(el);
       const tag = el.tagName.toLowerCase();
@@ -105,17 +151,58 @@ export async function extractSectionLayouts(
       }
       if (isImg) {
         node.isImage = true;
-        const src = (el as HTMLImageElement).currentSrc || (el as HTMLImageElement).src;
+        const img = el as HTMLImageElement;
+        const src = img.currentSrc || img.src;
         if (src) node.imgSrc = src;
+        if ('srcset' in img && img.srcset) node.imgSrcset = img.srcset;
       } else if (isText) {
         node.isText = true;
         node.textPreview = (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 120);
         node.fontSize = cs.fontSize;
+        node.fontWeight = cs.fontWeight;
+        node.fontFamily = cs.fontFamily;
+        node.lineHeight = cs.lineHeight;
+        if (cs.letterSpacing && cs.letterSpacing !== 'normal') node.letterSpacing = cs.letterSpacing;
+        if (cs.textTransform && cs.textTransform !== 'none') node.textTransform = cs.textTransform;
         node.color = cs.color;
       }
       if (cs.backgroundColor && cs.backgroundColor !== 'rgba(0, 0, 0, 0)' && cs.backgroundColor !== 'transparent') {
         node.bgColor = cs.backgroundColor;
       }
+      // Frontier visual styling — only emit when meaningful (non-default).
+      if (cs.borderRadius && cs.borderRadius !== '0px') node.borderRadius = cs.borderRadius;
+      // Border: prefer the shorthand if it's uniform; otherwise pick whichever side is non-zero.
+      const borderTop = `${cs.borderTopWidth} ${cs.borderTopStyle} ${cs.borderTopColor}`;
+      if (cs.borderTopWidth !== '0px' && cs.borderTopStyle !== 'none') {
+        node.border = borderTop;
+      }
+      if (cs.boxShadow && cs.boxShadow !== 'none') node.boxShadow = cs.boxShadow;
+      if (cs.backdropFilter && cs.backdropFilter !== 'none') node.backdropFilter = cs.backdropFilter;
+      if (cs.filter && cs.filter !== 'none') node.filter = cs.filter;
+      if (cs.transform && cs.transform !== 'none' && cs.transform !== 'matrix(1, 0, 0, 1, 0, 0)') {
+        node.transform = cs.transform;
+      }
+      if (cs.opacity && cs.opacity !== '1') node.opacity = cs.opacity;
+      if (cs.backgroundImage && cs.backgroundImage !== 'none') {
+        node.bgImage = cs.backgroundImage;
+        const grad = parseGradient(cs.backgroundImage);
+        if (grad) node.gradient = grad;
+      }
+      // padding + margin: emit shorthand only if any side is non-zero
+      const padNonZero = ['paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft'].some(
+        (k) => (cs as any)[k] !== '0px'
+      );
+      if (padNonZero) {
+        node.padding = `${cs.paddingTop} ${cs.paddingRight} ${cs.paddingBottom} ${cs.paddingLeft}`;
+      }
+      const marNonZero = ['marginTop', 'marginRight', 'marginBottom', 'marginLeft'].some(
+        (k) => (cs as any)[k] !== '0px' && (cs as any)[k] !== 'auto'
+      );
+      if (marNonZero) {
+        node.margin = `${cs.marginTop} ${cs.marginRight} ${cs.marginBottom} ${cs.marginLeft}`;
+      }
+      if (cs.overflow && cs.overflow !== 'visible') node.overflow = cs.overflow;
+      if (cs.cursor && cs.cursor !== 'auto' && cs.cursor !== 'default') node.cursor = cs.cursor;
 
       if (depth >= MAX_DEPTH) return node;
       const kids: Element[] = [];

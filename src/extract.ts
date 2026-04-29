@@ -8,13 +8,14 @@ import {
   dumpFullDOM,
   createAssetCollector,
 } from './static.ts';
+import { sampledScrollCapture } from './sampler.ts';
 import {
   detectStack,
   scanComputedTransitions,
   captureCDPAnimations,
   writeMotionArtifacts,
 } from './motion.ts';
-import { extractTokens, writeTokenArtifacts } from './tokens.ts';
+import { extractTokens, writeTokenArtifacts, extractCSSVars } from './tokens.ts';
 import { detectSections, captureSectionScreenshots } from './sections.ts';
 import { writeRebuildMd, writeStackMd } from './rebuild.ts';
 import {
@@ -81,13 +82,16 @@ async function main() {
 
   const assets = createAssetCollector(page, opts.outDir);
 
-  console.log('▶ phase 1: navigate + scroll');
+  console.log('▶ phase 1: navigate + sampled scroll');
   await page.goto(opts.url, { waitUntil: 'networkidle', timeout: 60000 }).catch(async () => {
     console.warn('  ⚠️  networkidle timeout, falling back to load');
     await page.goto(opts.url, { waitUntil: 'load', timeout: 60000 });
   });
   await page.waitForTimeout(2000);
-  await autoScroll(page);
+  // Sampled scroll: captures viewport screenshots + lazy-image deltas + visible
+  // framer-named regions at every scroll step. Replaces a bare autoScroll so we
+  // record what enters the page over time, not just the end state.
+  const scrollSamples = await sampledScrollCapture(page, opts.outDir);
 
   const pageTitle = await page.title();
   console.log(`  📄 "${pageTitle}"`);
@@ -103,9 +107,10 @@ async function main() {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.waitForTimeout(400);
 
-  console.log('\n▶ phase 4: design tokens');
+  console.log('\n▶ phase 4: design tokens + source CSS vars');
   const tokens = await extractTokens(page);
-  await writeTokenArtifacts(opts.outDir, tokens);
+  const cssVars = await extractCSSVars(page).catch(() => []);
+  await writeTokenArtifacts(opts.outDir, tokens, cssVars);
 
   console.log('\n▶ phase 5: motion (CDP + computed scan)');
   const cdp = await context.newCDPSession(page);
