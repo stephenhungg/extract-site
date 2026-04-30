@@ -110,12 +110,22 @@ export async function captureScrollLinkedMotion(
     vpH: window.innerHeight,
   }));
   const stride = Math.max(200, Math.round(vpH / 3));
-  const positions: number[] = [];
-  for (let y = 0; y <= totalH; y += stride) positions.push(y);
-  if (positions[positions.length - 1] !== totalH) positions.push(Math.max(0, totalH - vpH));
+  const positions = new Set<number>();
+  for (let y = 0; y <= totalH; y += stride) positions.add(y);
+  positions.add(Math.max(0, totalH - vpH));
+  // Densify around section boundaries — that's where transition choreography
+  // lives (bg crossfade, pin handoff, headline exit/enter etc).
+  for (const s of sections) {
+    const top = s.bbox.y;
+    for (const offset of [-vpH, -200, -50, 0, 50, 200, vpH * 0.5]) {
+      const y = Math.max(0, Math.min(totalH, top + offset));
+      positions.add(y);
+    }
+  }
+  const sortedPositions = Array.from(positions).sort((a, b) => a - b);
 
   const samples: RawSample[] = [];
-  for (const y of positions) {
+  for (const y of sortedPositions) {
     await page.evaluate((yy) => window.scrollTo(0, yy), y);
     await page.waitForTimeout(180);
     const elements: any[] = await page.evaluate((sels) => {

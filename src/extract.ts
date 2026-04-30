@@ -25,6 +25,7 @@ import {
 } from './motion.ts';
 import { captureHoverStates, writeHoverArtifacts } from './hover.ts';
 import { captureScrollLinkedMotion, writeScrollMotionArtifacts } from './scroll-motion.ts';
+import { synthesizeTransitions, writeTransitionArtifacts } from './transitions.ts';
 import { extractTokens, writeTokenArtifacts, extractCSSVars } from './tokens.ts';
 import { detectSections, captureSectionScreenshots } from './sections.ts';
 import { writeRebuildMd, writeStackMd } from './rebuild.ts';
@@ -178,6 +179,10 @@ async function main() {
   });
   await writeScrollMotionArtifacts(opts.outDir, scrollBehaviors, sectionBgColors);
 
+  console.log('\n▶ phase 9c: section-boundary transitions (the choreography between sections)');
+  const transitions = synthesizeTransitions(sections, scrollBehaviors, sectionBgColors);
+  await writeTransitionArtifacts(opts.outDir, transitions);
+
   console.log('\n▶ phase 10: per-section motion summary + finalize artifacts');
   const sectionMotion = summarizeSectionMotion(sections, computedLinked, cdpLinked, hovers);
   await writeFile(
@@ -202,7 +207,7 @@ async function main() {
     assetCount: assets.manifest.length,
   };
   await writeFile(join(opts.outDir, 'meta.json'), JSON.stringify(meta, null, 2), 'utf8');
-  await writeRebuildMd(opts.outDir, meta, sections, sectionContents, sectionMotion, hovers, scrollBehaviors, sectionBgColors);
+  await writeRebuildMd(opts.outDir, meta, sections, sectionContents, sectionMotion, hovers, scrollBehaviors, sectionBgColors, transitions);
 
   await context.close();
   await browser.close();

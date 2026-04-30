@@ -4,6 +4,7 @@ import type { Meta, SectionInfo, DetectedStack, HoverState } from './types.ts';
 import type { SectionContent } from './content.ts';
 import type { SectionMotionSummary } from './motion.ts';
 import type { ScrollBehavior } from './scroll-motion.ts';
+import type { TransitionSpec } from './transitions.ts';
 
 export async function writeRebuildMd(
   outDir: string,
@@ -13,7 +14,8 @@ export async function writeRebuildMd(
   motion: SectionMotionSummary[] = [],
   hovers: HoverState[] = [],
   scrollBehaviors: ScrollBehavior[] = [],
-  sectionBgColors: Map<string, string> = new Map()
+  sectionBgColors: Map<string, string> = new Map(),
+  transitions: TransitionSpec[] = []
 ) {
   const stack = meta.stack;
   const recommended = recommendedStack(stack);
@@ -213,6 +215,47 @@ export async function writeRebuildMd(
     if (c.svgs.length) {
       lines.push(`\n**Inline SVGs:** ${c.svgs.length} (full markup in \`content/sections.json\`)`);
     }
+  }
+
+  // Section-boundary transitions — the choreography BETWEEN sections
+  if (transitions.length) {
+    lines.push(`\n## Section Transitions (the choreography between sections)\n`);
+    lines.push(`> Real "Framer feel" lives at section boundaries: bg cross-fades, pin handoffs, exit/enter sequences. These are JS-driven (framer-motion \`useScroll\` / GSAP \`ScrollTrigger.scrub\`), not discrete CSS animations — easy to miss if you only look at per-section motion.\n`);
+    for (const t of transitions) {
+      lines.push(`### ${t.fromSlug} → ${t.toSlug}`);
+      lines.push(`*${t.summary}*`);
+      lines.push(`- scroll window: ${t.scrollFrom}→${t.scrollTo}px`);
+      if (t.bgCrossfade) {
+        lines.push(`- 🎨 **bg crossfade**: \`${t.bgCrossfade.fromColor}\` → \`${t.bgCrossfade.toColor}\` over ${t.bgCrossfade.crossfadeOver}px`);
+      }
+      if (t.bridging.length) {
+        lines.push(`- 🌉 **bridging** (pinned/scrub spanning the boundary):`);
+        for (const e of t.bridging) {
+          const tag = e.framerName ? `\`${e.framerName}\`` : `\`${e.tag}\``;
+          const parts: string[] = [];
+          if (e.scaleStart && e.scaleEnd) parts.push(`scale ${e.scaleStart}→${e.scaleEnd}`);
+          if (e.translateYStart !== undefined && e.translateYEnd !== undefined) parts.push(`tY ${e.translateYStart}→${e.translateYEnd}px`);
+          if (e.opacityStart !== undefined && e.opacityEnd !== undefined) parts.push(`op ${e.opacityStart}→${e.opacityEnd}`);
+          lines.push(`  - ${tag} [${e.kind.join(',')}]${parts.length ? ' — ' + parts.join(', ') : ''}${e.text ? ` — "${e.text.slice(0, 40)}"` : ''}`);
+        }
+      }
+      if (t.exiting.length) {
+        lines.push(`- ⬆ **exiting** (section A elements leaving):`);
+        for (const e of t.exiting) {
+          const tag = e.framerName ? `\`${e.framerName}\`` : `\`${e.tag}\``;
+          lines.push(`  - ${tag} [${e.kind.join(',')}]${e.text ? ` — "${e.text.slice(0, 40)}"` : ''}`);
+        }
+      }
+      if (t.entering.length) {
+        lines.push(`- ⬇ **entering** (section B elements arriving):`);
+        for (const e of t.entering) {
+          const tag = e.framerName ? `\`${e.framerName}\`` : `\`${e.tag}\``;
+          lines.push(`  - ${tag} [${e.kind.join(',')}]${e.text ? ` — "${e.text.slice(0, 40)}"` : ''}`);
+        }
+      }
+      lines.push('');
+    }
+    lines.push(`> 🔑 **How to implement**: wrap consecutive sections in a single \`useScroll({target: containerRef})\` and drive bg color via \`useTransform(scrollYProgress, [0.4, 0.6], [fromBg, toBg])\`. For bridging elements, use \`position: sticky\` + scale/opacity mapped to the same scroll progress. Full data in \`motion/transitions.json\`.\n`);
   }
 
   lines.push(`\n## Per-section build prompt (paste into Claude Code)\n`);
