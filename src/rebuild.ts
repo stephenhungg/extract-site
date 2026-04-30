@@ -3,6 +3,7 @@ import { join, relative } from 'node:path';
 import type { Meta, SectionInfo, DetectedStack, HoverState } from './types.ts';
 import type { SectionContent } from './content.ts';
 import type { SectionMotionSummary } from './motion.ts';
+import type { ScrollBehavior } from './scroll-motion.ts';
 
 export async function writeRebuildMd(
   outDir: string,
@@ -10,7 +11,9 @@ export async function writeRebuildMd(
   sections: SectionInfo[],
   contents: SectionContent[] = [],
   motion: SectionMotionSummary[] = [],
-  hovers: HoverState[] = []
+  hovers: HoverState[] = [],
+  scrollBehaviors: ScrollBehavior[] = [],
+  sectionBgColors: Map<string, string> = new Map()
 ) {
   const stack = meta.stack;
   const recommended = recommendedStack(stack);
@@ -70,12 +73,25 @@ export async function writeRebuildMd(
     hoversBySlug.get(h.sectionSlug)!.push(h);
   }
 
+  // Group scroll behaviors by section
+  const scrollBySlug = new Map<string, ScrollBehavior[]>();
+  for (const b of scrollBehaviors) {
+    if (!b.sectionSlug) continue;
+    if (!scrollBySlug.has(b.sectionSlug)) scrollBySlug.set(b.sectionSlug, []);
+    scrollBySlug.get(b.sectionSlug)!.push(b);
+  }
+
   for (const s of sections) {
     const c = contentBySlug.get(s.slug);
     const m = motionBySlug.get(s.slug);
     const sectionHovers = hoversBySlug.get(s.slug) || [];
+    const sectionScroll = scrollBySlug.get(s.slug) || [];
+    const bgColor = sectionBgColors.get(s.slug);
     lines.push(`\n### ${s.index}. \`${s.slug}\``);
     if (c?.framer.name) lines.push(`*framer name: ${c.framer.name}*`);
+    if (bgColor && bgColor !== 'rgba(0, 0, 0, 0)' && bgColor !== 'transparent') {
+      lines.push(`**Background:** \`${bgColor}\``);
+    }
     lines.push('');
     lines.push(`- screenshot (desktop): \`screenshots/sections/${s.slug}-desktop.png\``);
     lines.push(`- screenshot (tablet): \`screenshots/sections/${s.slug}-tablet.png\``);
@@ -91,6 +107,50 @@ export async function writeRebuildMd(
         lines.push(`- defaults: ${m.dominantDurationMs}ms × \`${m.dominantEasing}\``);
       }
       for (const n of m.notable) lines.push(`- ${n}`);
+    }
+
+    // Scroll-linked motion block — the v0.6 payoff. The motion that doesn't
+    // fire as a discrete animation but is JS-scrubbed to scroll position.
+    // This is what GSAP ScrollTrigger.scrub does, what framer's useScroll
+    // does. The classic example: a hero that shrinks + pins as you scroll.
+    if (sectionScroll.length) {
+      lines.push('');
+      lines.push(`**Scroll-linked motion (${sectionScroll.length} elements):**`);
+      for (const b of sectionScroll.slice(0, 8)) {
+        const tag = b.framerName ? `\`${b.framerName}\`` : `\`${b.tag}\``;
+        const kinds = b.kind.join(', ');
+        const parts: string[] = [];
+        if (b.scaleStart && b.scaleEnd && b.scaleStart !== b.scaleEnd) {
+          parts.push(`scale ${b.scaleStart}→${b.scaleEnd}`);
+        }
+        if (b.translateYStart !== undefined && b.translateYEnd !== undefined) {
+          parts.push(`translateY ${b.translateYStart}→${b.translateYEnd}px`);
+        }
+        if (b.translateXStart !== undefined && b.translateXEnd !== undefined) {
+          parts.push(`translateX ${b.translateXStart}→${b.translateXEnd}px`);
+        }
+        if (b.rotateStart !== undefined && b.rotateEnd !== undefined) {
+          parts.push(`rotate ${b.rotateStart}°→${b.rotateEnd}°`);
+        }
+        if (b.opacityStart !== undefined && b.opacityEnd !== undefined) {
+          parts.push(`opacity ${b.opacityStart}→${b.opacityEnd}`);
+        }
+        const transformStr = parts.length ? ` — ${parts.join(', ')}` : '';
+        const scrollStr = `over scrollY ${b.scrollFrom}→${b.scrollTo}px`;
+        lines.push(`- ${tag} \`${kinds}\`${transformStr} ${scrollStr}`);
+      }
+      if (sectionScroll.length > 8) {
+        lines.push(`- ...and ${sectionScroll.length - 8} more (see \`motion/scroll-motion.json\`)`);
+      }
+      // Generic implementation hint
+      const hasPinScrub = sectionScroll.some((b) => b.kind.includes('pin-scrub'));
+      const hasParallax = sectionScroll.some((b) => b.kind.includes('parallax'));
+      if (hasPinScrub) {
+        lines.push(`- 🔑 **pin-scrub pattern detected** — implement with framer-motion \`useScroll\` + \`useTransform\`, or GSAP \`ScrollTrigger.create({pin:true, scrub:true})\``);
+      }
+      if (hasParallax) {
+        lines.push(`- parallax: bind translateY to scrollYProgress with negative multiplier (e.g. \`useTransform(p, [0,1], ['0%','-30%'])\`)`);
+      }
     }
     if (sectionHovers.length) {
       lines.push('');

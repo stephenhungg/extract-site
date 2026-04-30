@@ -24,6 +24,7 @@ import {
   writeMotionArtifacts,
 } from './motion.ts';
 import { captureHoverStates, writeHoverArtifacts } from './hover.ts';
+import { captureScrollLinkedMotion, writeScrollMotionArtifacts } from './scroll-motion.ts';
 import { extractTokens, writeTokenArtifacts, extractCSSVars } from './tokens.ts';
 import { detectSections, captureSectionScreenshots } from './sections.ts';
 import { writeRebuildMd, writeStackMd } from './rebuild.ts';
@@ -170,6 +171,13 @@ async function main() {
   });
   await writeHoverArtifacts(opts.outDir, hovers);
 
+  console.log('\n▶ phase 9b: scroll-linked motion (pin-scrub, parallax, scroll-scaled)');
+  const { behaviors: scrollBehaviors, sectionBgColors } = await captureScrollLinkedMotion(page, sections).catch((e) => {
+    console.warn('  ⚠️  scroll-motion capture failed:', (e as Error).message);
+    return { behaviors: [], sectionBgColors: new Map<string, string>() };
+  });
+  await writeScrollMotionArtifacts(opts.outDir, scrollBehaviors, sectionBgColors);
+
   console.log('\n▶ phase 10: per-section motion summary + finalize artifacts');
   const sectionMotion = summarizeSectionMotion(sections, computedLinked, cdpLinked, hovers);
   await writeFile(
@@ -194,7 +202,7 @@ async function main() {
     assetCount: assets.manifest.length,
   };
   await writeFile(join(opts.outDir, 'meta.json'), JSON.stringify(meta, null, 2), 'utf8');
-  await writeRebuildMd(opts.outDir, meta, sections, sectionContents, sectionMotion, hovers);
+  await writeRebuildMd(opts.outDir, meta, sections, sectionContents, sectionMotion, hovers, scrollBehaviors, sectionBgColors);
 
   await context.close();
   await browser.close();
