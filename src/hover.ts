@@ -113,6 +113,29 @@ export async function captureHoverStates(
           const cs = getComputedStyle(el);
           const before: Record<string, string> = {};
           for (const p of props) before[p] = (cs as any)[p];
+          // Snapshot the cursor:pointer ancestor too — on framer pages,
+          // whileHover is bound to a wrapping motion.div, not the button itself.
+          // We'll diff both and record whichever shows a delta.
+          let pointerAncestorSel: string | null = null;
+          let pointerAncestorBefore: Record<string, string> | null = null;
+          let pointerAncestorFramerName: string | undefined;
+          let p: Element | null = el.parentElement;
+          let depth = 0;
+          while (p && depth < 4 && p !== root) {
+            const pcs = getComputedStyle(p);
+            if (pcs.cursor === 'pointer' || (p as HTMLElement).dataset?.framerName) {
+              const psel = bestSelector(p);
+              if (psel) {
+                pointerAncestorSel = psel;
+                pointerAncestorBefore = {};
+                for (const pp of props) pointerAncestorBefore[pp] = (pcs as any)[pp];
+                pointerAncestorFramerName = (p as HTMLElement).dataset?.framerName;
+                break;
+              }
+            }
+            p = p.parentElement;
+            depth++;
+          }
           // Note: we don't filter on "has transition declared" — framer-motion
           // adds transitions dynamically when whileHover triggers, so the
           // resting state often shows transition: none. We hover everything
@@ -131,6 +154,11 @@ export async function captureHoverStates(
             transition: cs.transition,
             duration: cs.transitionDuration,
             easing: cs.transitionTimingFunction,
+            ancestor: pointerAncestorSel ? {
+              selector: pointerAncestorSel,
+              framerName: pointerAncestorFramerName,
+              before: pointerAncestorBefore!,
+            } : undefined,
           });
         }
         return result;
@@ -158,39 +186,66 @@ export async function captureHoverStates(
       await page.mouse.move(cxCxCy.cx, cxCxCy.cy, { steps: 4 });
       await page.waitForTimeout(450);
 
-      const after: Record<string, string> | null = await page.evaluate(
-        ({ sel, props }) => {
-          const el = document.querySelector(sel);
-          if (!el) return null;
-          const cs = getComputedStyle(el);
-          const out: Record<string, string> = {};
-          for (const p of props) out[p] = (cs as any)[p];
-          return out;
+      const afterPair: { el: Record<string, string> | null; ancestor: Record<string, string> | null } = await page.evaluate(
+        ({ sel, ancestorSel, props }) => {
+          const grab = (s: string) => {
+            const el = document.querySelector(s);
+            if (!el) return null;
+            const cs = getComputedStyle(el);
+            const out: Record<string, string> = {};
+            for (const p of props) out[p] = (cs as any)[p];
+            return out;
+          };
+          return { el: grab(sel), ancestor: ancestorSel ? grab(ancestorSel) : null };
         },
-        { sel: c.selector, props: TRACKED_PROPS }
+        { sel: c.selector, ancestorSel: (c as any).ancestor?.selector || null, props: TRACKED_PROPS }
       );
-      // park the cursor off-screen so the next iteration starts clean
       await page.mouse.move(0, 0);
       await page.waitForTimeout(150);
-      if (!after) continue;
 
-      const delta: Record<string, { from: string; to: string }> = {};
-      for (const p of TRACKED_PROPS) {
-        if (c.before[p] !== after[p]) delta[p] = { from: c.before[p], to: after[p] };
+      const elDelta: Record<string, { from: string; to: string }> = {};
+      if (afterPair.el) {
+        for (const p of TRACKED_PROPS) {
+          if (c.before[p] !== afterPair.el[p]) elDelta[p] = { from: c.before[p], to: afterPair.el[p] };
+        }
       }
-      if (Object.keys(delta).length === 0) continue;
+      const ancestorDelta: Record<string, { from: string; to: string }> = {};
+      const ancestor = (c as any).ancestor;
+      if (ancestor && afterPair.ancestor) {
+        for (const p of TRACKED_PROPS) {
+          if (ancestor.before[p] !== afterPair.ancestor[p]) {
+            ancestorDelta[p] = { from: ancestor.before[p], to: afterPair.ancestor[p] };
+          }
+        }
+      }
 
-      out.push({
-        selector: c.selector,
-        framerName: c.framerName,
-        sectionSlug: section.slug,
-        bbox: c.bbox,
-        text: c.text || undefined,
-        delta,
-        transition: c.transition,
-        duration: c.duration,
-        easing: c.easing,
-      });
+      // Prefer ancestor delta on framer pages — that's where the hover is
+      // actually bound. Fall back to element delta if no ancestor or no change.
+      if (Object.keys(ancestorDelta).length > 0) {
+        out.push({
+          selector: ancestor.selector,
+          framerName: ancestor.framerName,
+          sectionSlug: section.slug,
+          bbox: c.bbox,
+          text: c.text || undefined,
+          delta: ancestorDelta,
+          transition: c.transition,
+          duration: c.duration,
+          easing: c.easing,
+        });
+      } else if (Object.keys(elDelta).length > 0) {
+        out.push({
+          selector: c.selector,
+          framerName: c.framerName,
+          sectionSlug: section.slug,
+          bbox: c.bbox,
+          text: c.text || undefined,
+          delta: elDelta,
+          transition: c.transition,
+          duration: c.duration,
+          easing: c.easing,
+        });
+      }
     }
   }
 
