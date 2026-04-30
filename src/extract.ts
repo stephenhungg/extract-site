@@ -98,12 +98,12 @@ async function main() {
   });
   await page.waitForTimeout(2000);
 
-  // CDP capture has to happen FIRST scroll-through, otherwise framer-motion's
-  // `whileInView`/`once` triggers won't fire again on subsequent passes.
+  // CDP capture has to happen on the FIRST scroll-through, otherwise
+  // framer-motion's `whileInView`/`once` triggers won't refire on a 2nd pass.
   console.log('\n▶ phase 1b: CDP animation capture (during scroll)');
   const cdp = await context.newCDPSession(page);
   const cdpRaw = await captureCDPAnimations(cdp, page, 12000);
-  console.log(`  🎞  ${cdpRaw.length} CDP animations fired during initial scroll`);
+  console.log(`  🎞  ${cdpRaw.length} CDP animations fired during scroll`);
 
   // Sampled scroll: captures viewport screenshots + lazy-image deltas + visible
   // framer-named regions at every scroll step.
