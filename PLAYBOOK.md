@@ -92,9 +92,17 @@ First chromium install downloads ~150MB / 30–90s — expect the pause, it's no
 ## 3. Extract → reference artifacts
 
 ```bash
-extract-site <url>                              # writes ./reference/<slug>/
+extract-site <url>                              # single page → ./reference/<slug>/
 extract-site <url> --out ./reference --name <slug>
+extract-site <url> --routes [--max-routes 20]   # multi-page → ./reference/<slug>/<route>/
 ```
+
+**Multi-page sites:** pass `--routes`. It discovers same-origin routes from the
+homepage's `<a href>` (headed, so hydration-injected nav is present), bounded by
+`--max-routes` (default 20), and extracts each into its own
+`reference/<slug>/<route-slug>/` folder (`/` → `home`, `/our-work` → `our-work`).
+Rebuild each as a Next.js route. This is the clean-rebuild replacement for the old
+mirror crawl — it re-extracts per route, it does NOT copy Framer's runtime.
 
 **Always run HEADED. Never pass `--headless`.** Framer's motion libraries
 (`motion/react`, GSAP) are rAF + IntersectionObserver driven, and hover/mouse

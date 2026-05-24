@@ -49,11 +49,18 @@ const DEFAULT_VIEWPORTS: Viewport[] = [
   { name: 'mobile', width: 390, height: 844 },
 ];
 
-function parseArgs(argv: string[]): ExtractOptions {
+interface CliArgs extends ExtractOptions {
+  routes: boolean;
+  maxRoutes: number;
+  outRoot: string;
+  host: string;
+}
+
+function parseArgs(argv: string[]): CliArgs {
   const args = argv.slice(2);
   const url = args.find((a) => !a.startsWith('--'));
   if (!url) {
-    console.error('Usage: extract-site <url> [--out <dir>] [--name <slug>] [--headless]');
+    console.error('Usage: extract-site <url> [--out <dir>] [--name <slug>] [--headless] [--routes] [--max-routes <n>]');
     process.exit(1);
   }
   const get = (k: string) => {
@@ -70,11 +77,88 @@ function parseArgs(argv: string[]): ExtractOptions {
     outDir: join(outRoot, name),
     headless: has('headless'),
     viewports: DEFAULT_VIEWPORTS,
+    routes: has('routes'),
+    maxRoutes: Number(get('max-routes') ?? 20),
+    outRoot,
+    host,
   };
 }
 
+// turn a route pathname into a folder-safe slug. "/" → "home", "/our-work" →
+// "our-work", "/project/foo" → "project-foo".
+function routeSlug(pathname: string): string {
+  const cleaned = pathname.replace(/^\/+|\/+$/g, '');
+  if (!cleaned) return 'home';
+  return cleaned.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+}
+
+// discover same-origin internal routes from the homepage's <a href>. headed so
+// hydration-injected nav links are present. bounded by maxRoutes.
+async function discoverRoutes(url: string, headless: boolean, maxRoutes: number): Promise<string[]> {
+  const browser = await chromium.launch({ headless, args: ['--disable-blink-features=AutomationControlled'] });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    // some Framer apps never reach networkidle — fail over to `load` after 20s
+    // rather than blocking discovery for a full minute.
+    await page.goto(url, { waitUntil: 'networkidle', timeout: 20000 }).catch(() => page.goto(url, { waitUntil: 'load', timeout: 40000 }));
+    await page.waitForTimeout(2000);
+    const origin = new URL(url).origin;
+    const hrefs = await page.$$eval('a[href]', (els) => els.map((a) => (a as HTMLAnchorElement).href));
+    await browser.close();
+    const paths = new Set<string>(['/']); // always include the homepage
+    for (const h of hrefs) {
+      try {
+        const u = new URL(h, url);
+        if (u.origin !== origin) continue;              // same-origin only
+        if (/\.(pdf|zip|png|jpe?g|svg|webp|mp4|woff2?)$/i.test(u.pathname)) continue; // not files
+        if (u.pathname.length > 80) continue;           // skip junk
+        paths.add(u.pathname.replace(/\/+$/, '') || '/');
+      } catch { /* ignore malformed */ }
+    }
+    return Array.from(paths).slice(0, maxRoutes);
+  } finally {
+    await browser.close().catch(() => {});
+  }
+}
+
 async function main() {
-  const opts = parseArgs(process.argv);
+  const cli = parseArgs(process.argv);
+
+  // multi-route mode: discover same-origin routes, extract each into its own
+  // reference/<slug>/<route>/ folder. rebuild each as a Next.js route. this is
+  // the clean-rebuild replacement for the old mirror crawl — no runtime copying.
+  if (cli.routes) {
+    console.log(`\n🗺  route mode → discovering same-origin routes on ${cli.host}`);
+    const routes = await discoverRoutes(cli.url, cli.headless, cli.maxRoutes);
+    console.log(`   found ${routes.length} route(s): ${routes.join(', ')}\n`);
+    const origin = new URL(cli.url).origin;
+    for (const [i, path] of routes.entries()) {
+      const slug = routeSlug(path);
+      console.log(`\n━━━ route ${i + 1}/${routes.length}: ${path} → ${slug}/ ━━━`);
+      // per-route guard: a single heavy/never-idle route (some Framer apps never
+      // reach networkidle) must not stall the whole batch. cap at 4 min/route.
+      const extract = extractOne({
+        url: origin + path,
+        name: slug,
+        outDir: join(cli.outRoot, cli.name, slug),
+        headless: cli.headless,
+        viewports: cli.viewports,
+      });
+      const timeout = new Promise<void>((_, rej) =>
+        setTimeout(() => rej(new Error('route timed out after 4min')), 240_000)
+      );
+      await Promise.race([extract, timeout]).catch((e) =>
+        console.error(`  💥 route ${path} failed:`, (e as Error).message)
+      );
+    }
+    console.log(`\n✅ all routes done → ${join(cli.outRoot, cli.name)}/`);
+    return;
+  }
+
+  await extractOne(cli);
+}
+
+async function extractOne(opts: ExtractOptions) {
   const t0 = Date.now();
   console.log(`\n🎯 extract-site → ${opts.url}`);
   console.log(`   out: ${opts.outDir}`);

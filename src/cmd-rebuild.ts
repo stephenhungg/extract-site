@@ -28,7 +28,7 @@ function parseArgs(argv: string[]): Args {
   const positional = args.filter((a, i) => !a.startsWith("--") && !args[i - 1]?.startsWith("--"));
   const reference = positional[0];
   if (!reference) {
-    console.error("Usage: extract-site rebuild <reference-dir> [--out <project-dir>] [--name <slug>] [--source-mirror <path>]");
+    console.error("Usage: extract-site rebuild <reference-dir> [--out <project-dir>] [--name <slug>]");
     process.exit(1);
   }
   const get = (k: string) => {

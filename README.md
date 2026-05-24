@@ -30,11 +30,15 @@ bunx playwright install chromium
 ~/.claude/skills/extract-site/bin/extract-site https://framer.com
 ~/.claude/skills/extract-site/bin/extract-site https://linear.app --name linear
 ~/.claude/skills/extract-site/bin/extract-site https://example.framer.website --out ./refs
+
+# multi-page site: crawl same-origin routes, one reference/<slug>/<route>/ per page
+~/.claude/skills/extract-site/bin/extract-site https://studio.framer.website --routes --max-routes 20
 ```
 
 Defaults:
 - `--out` = `./reference`
 - `--name` = auto-derived from hostname
+- `--routes` = off (single page); `--max-routes` = 20 when `--routes` is set
 - **Always runs headed — don't override it.** Framer's motion libraries
   (`motion/react`, GSAP) are rAF + IntersectionObserver driven and hover needs a
   real render context; under headless you capture a site with **zero motion** and

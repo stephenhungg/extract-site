@@ -67,60 +67,27 @@ cd ~/.claude/skills/extract-site
 
 ## Usage
 
-The CLI is now modular — three lifecycle phases:
+Two commands. Extract a site, then rebuild it clean.
 
 ```bash
-# Phase 1: extract — rip a deployed site into a reference/ folder
-extract-site <url> [--out <dir>] [--name <slug>] [--headless]
+# extract — rip a deployed site into a reference/ folder (HEADED; never --headless)
+extract-site <url> [--out <dir>] [--name <slug>] [--routes] [--max-routes <n>]
 
-# Phase 2: init — scaffold an editable customize project from a reference
-extract-site init <reference-dir> [--out <project-dir>] [--name <slug>] [--mirror <path>]
+# rebuild — scaffold an editable Vite+React+framer-motion project from a reference
+extract-site rebuild <reference-dir> [--out <project-dir>] [--name <slug>]
 
-# Phase 3: build — apply your config.json to the mirror, output dist/
-extract-site build [project-dir] [--strict]
-extract-site watch [project-dir]
-
-# meta
 extract-site help
 ```
 
 Defaults:
 - `extract <url>` writes to `./reference/<slug>/` (slug derived from hostname)
-- `init <reference>` writes to `./<slug>-customized/` (use `--out` to override)
-- `build` and `watch` operate on the current dir unless given a project path
-- Extraction is headed by default (you watch the browser scroll the page). Pass `--headless` to hide it.
+- `--routes` crawls same-origin routes → `./reference/<slug>/<route>/` per page
+- `rebuild <reference>` writes to `./<slug>-rebuild/` (use `--out` to override)
+- Extraction is HEADED (required — headless captures zero motion)
 
-Examples:
-```bash
-# rip a site
-extract-site https://example.framer.website
-
-# turn the reference into an editable project
-extract-site init ./reference/example --out ./my-clone
-
-# edit my-clone/config.json, then:
-extract-site build ./my-clone           # one-shot build
-extract-site watch ./my-clone           # live rebuild on config / css / baseline changes
-extract-site build ./my-clone --strict  # fail if any slot drifted
-```
-
-## The customize project (what `init` scaffolds)
-
-```
-<project>/
-  mirror/                   pristine runtime mirror — never edited
-  config.json               your overrides (REPLACE side)
-  template-baseline.json    auto-populated from the reference (FIND side)
-  overrides.css             css patches injected into <head>
-  customize.mjs             generic pipeline (cheerio + slot registry + watch + strict)
-  package.json              bun-friendly scripts
-  README.md                 usage
-  .gitignore
-```
-
-`customize.mjs` walks every leaf string in `template-baseline.json`, looks up the matching path in `config.json`, and rewrites that string everywhere in `mirror/` → `dist/`. Color tokens under `theme.colors` get hex+rgb expansion. Image filename rewrites go under `images.replacements`.
-
-For project-specific HTML surgery (mailto links, post-hydration injections to survive React #425, hide-by-selector rules), edit the `patchHtml` function in the scaffolded `customize.mjs` — cheerio is pre-loaded against `dist/index.html`.
+Verify the rebuild against the live URL with `probe.mjs` / `motion-probe.mjs` (see
+PLAYBOOK.md §4). For the converged Next.js + Tailwind + GSAP hand-port, follow
+PLAYBOOK.md §5 — there's no command for it; it's a manual port.
 
 ## What it produces
 
@@ -161,19 +128,22 @@ reference/<name>/
 
 ## Workflow: extract → rebuild → verify
 
-**There is one path: rebuild clean.** Do NOT mirror (the `init`/`build`/`watch`
-customize commands string-swap into Framer's runtime — a maintenance dead end;
-avoid them). Full method is in `PLAYBOOK.md`; the short version:
+**There is one path: rebuild clean.** Do NOT mirror Framer's runtime (copy its
+html/js and string-swap content) — it's a maintenance dead end (minified hashes
+change every build). Full method is in `PLAYBOOK.md`; the short version:
 
 ### 1. extract
 
 ```bash
-extract-site <url>      # writes ./reference/<slug>/  (HEADED — never --headless)
+extract-site <url>                            # single page → ./reference/<slug>/
+extract-site <url> --routes [--max-routes 20] # multi-page → ./reference/<slug>/<route>/
 ```
 
-Headed browser scrolls the page, captures animations, harvests assets, dumps DOM +
-screenshots + tokens. ~60-90s for a typical landing page. Headless is forbidden:
+Headed browser (never `--headless`) scrolls the page, captures animations, harvests
+assets, dumps DOM + screenshots + tokens. ~60-90s per page. Headless is forbidden:
 `motion/react` + GSAP need a real render context, so headless captures zero motion.
+For multi-page sites, `--routes` discovers same-origin routes from the homepage and
+extracts each into its own subfolder (rebuild each as a Next.js route).
 
 ### 2. rebuild (two routes)
 

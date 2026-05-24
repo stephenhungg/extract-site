@@ -28,6 +28,7 @@ extract-site — reverse-engineer a site, then rebuild it clean
 
 usage:
   extract-site <url>                       full extract → reference/<slug>/  (HEADED — never --headless)
+  extract-site <url> --routes [--max-routes N]   crawl same-origin routes → reference/<slug>/<route>/
   extract-site rebuild <reference> [opts]  scaffold an EDITABLE react+vite project from a reference
                                            (each section becomes a real component you can edit)
   extract-site help                        show this message
@@ -38,9 +39,6 @@ usage:
 extract → rebuild → verify is the workflow: rip a site into reference/, rebuild it
 as clean editable code, then diff against the live URL with probe.mjs. Read
 PLAYBOOK.md for the full method. Do NOT mirror Framer's runtime — dead end.
-
-deprecated (mirror/customize path, avoid — kept only for back-compat):
-  extract-site init|build|watch            string-swap into Framer's runtime
 EOF
 }
 
@@ -51,18 +49,12 @@ case "$cmd" in
     usage
     exit 0
     ;;
-  init)
-    exec bun "$SKILL_DIR/src/cmd-init.ts" "$@"
-    ;;
-  build|watch)
-    exec bun "$SKILL_DIR/src/cmd-build.ts" "$@"
-    ;;
   rebuild)
     exec bun "$SKILL_DIR/src/cmd-rebuild.ts" "$@"
     ;;
   *)
     # default: treat first arg as a URL → existing extract behavior.
-    # ensure chromium is installed lazily, only for extraction (not init/build).
+    # ensure chromium is installed lazily, only for extraction.
     if [ ! -d "$HOME/Library/Caches/ms-playwright" ] && [ ! -d "$HOME/.cache/ms-playwright" ]; then
       echo "🌐 installing Playwright Chromium (first run, ~30-90s, ~150MB)…" >&2
       (cd "$SKILL_DIR" && bunx playwright install chromium)

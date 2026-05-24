@@ -38,7 +38,9 @@ bunx playwright install chromium
 
 ## The shipped tools (all headed, all parameterized)
 
-- `bin/extract-site <url>` — capture a site into `reference/<slug>/`
+- `bin/extract-site <url>` — capture a single page into `reference/<slug>/`
+- `bin/extract-site <url> --routes [--max-routes N]` — multi-page: crawl
+  same-origin routes, extract each into `reference/<slug>/<route>/`
 - `probe.mjs <originalUrl> <rebuildUrl> [outDir]` — numerical CSS-parity diff
 - `motion-probe.mjs <url> [interval] [outFile]` — scroll-keyframe motion capture
 
