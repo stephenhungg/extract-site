@@ -8,6 +8,11 @@ AI-built websites usually look average. Not because the models are bad, but beca
 
 This tool captures the **exact** durations, easing curves, framer-motion props, design tokens, and asset library from a real, deployed site — so when you tell Claude Code to rebuild it, it has hard ground truth instead of vibes.
 
+> **Cloning a Framer site? Read [`PLAYBOOK.md`](./PLAYBOOK.md) first.** It's the
+> full agent-facing method: which path to take, how to verify fidelity against the
+> live URL with the shipped `probe.mjs`, how to port motion, and the mistakes that
+> waste a day. The README covers the *tool*; the PLAYBOOK covers the *process*.
+
 ## Install
 
 ```bash
@@ -24,13 +29,16 @@ bunx playwright install chromium
 ```bash
 ~/.claude/skills/extract-site/bin/extract-site https://framer.com
 ~/.claude/skills/extract-site/bin/extract-site https://linear.app --name linear
-~/.claude/skills/extract-site/bin/extract-site https://example.framer.website --out ./refs --headless
+~/.claude/skills/extract-site/bin/extract-site https://example.framer.website --out ./refs
 ```
 
 Defaults:
 - `--out` = `./reference`
 - `--name` = auto-derived from hostname
-- Headed by default (so you can watch it work). Add `--headless` to hide.
+- **Always runs headed — don't override it.** Framer's motion libraries
+  (`motion/react`, GSAP) are rAF + IntersectionObserver driven and hover needs a
+  real render context; under headless you capture a site with **zero motion** and
+  don't notice. The `--headless` flag exists for CI on static sites only.
 
 ### As a Claude Code skill
 
