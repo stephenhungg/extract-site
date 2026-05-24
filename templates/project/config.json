@@ -1,0 +1,22 @@
+{
+  "_comment": "Your overrides. Every leaf string here that matches a leaf in template-baseline.json (by path) becomes a replacement slot. Add fields under any structure you like.",
+  "site": {
+    "title": "REPLACE_ME",
+    "description": "REPLACE_ME"
+  },
+  "theme": {
+    "colors": {
+      "_comment": "{ '#oldHex': '#newHex' } — both hex and rgb() forms are auto-expanded"
+    },
+    "fontFamily": "ui-sans-serif, system-ui, sans-serif",
+    "textTransform": "none"
+  },
+  "images": {
+    "_comment": "assets: { destFileName: srcRelToProject } — copies your image into dist/<dir>/. dirs: array of dest dirs (defaults to ['images']).",
+    "dirs": ["images"],
+    "assets": {},
+    "replacements": {
+      "_comment": "{ originalCdnFilename: newFilename } — rewrites every reference in the html/js bundle"
+    }
+  }
+}

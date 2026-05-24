@@ -24,6 +24,8 @@ import {
   writeMotionArtifacts,
 } from './motion.ts';
 import { captureHoverStates, writeHoverArtifacts } from './hover.ts';
+import { captureFiberHovers, writeFiberHoverArtifacts } from './hover-fiber.ts';
+import { captureHoversThoroughIsolated, writeThoroughHoverArtifacts } from './hover-thorough.ts';
 import { captureScrollLinkedMotion, writeScrollMotionArtifacts } from './scroll-motion.ts';
 import { synthesizeTransitions, writeTransitionArtifacts } from './transitions.ts';
 import { extractTokens, writeTokenArtifacts, extractCSSVars } from './tokens.ts';
@@ -35,6 +37,8 @@ import {
   writeContentArtifacts,
   harvestBackgroundImages,
 } from './content.ts';
+import { captureComputedStyles } from './computed-styles.ts';
+import { captureAppearEffects } from './appear-effects.ts';
 import { extractSectionLayouts, writeLayoutArtifacts } from './layout.ts';
 import { generateFontFaceCSS } from './fonts.ts';
 import type { ExtractOptions, Viewport, Meta } from './types.ts';
@@ -119,8 +123,20 @@ async function main() {
   const stack = await detectStack(page);
   console.log(`  framework=${stack.framework} framer=${stack.framer} motion=${stack.framerMotion} lenis=${stack.lenis} gsap=${stack.gsap}`);
 
-  console.log('\n▶ phase 3: dom dump + screenshots');
+  console.log('\n▶ phase 3: dom dump + computed styles + screenshots');
+  // capture computed styles FIRST — also tags every element with data-cs-id="N"
+  // so the same identifier shows up in full.html and per-section dumps below.
+  await captureComputedStyles(page, opts.outDir);
   await dumpFullDOM(page, opts.outDir);
+
+  // capture appear-effect specs by re-loading in a sandboxed browser where
+  // IntersectionObserver + Element.animate are nooped. framer's runtime
+  // injects the appear-css block but never animates → rules persist → we
+  // grab them. runs in parallel-ish (its own browser instance).
+  console.log('\n▶ phase 3b: appear-effect capture (sandboxed page)');
+  await captureAppearEffects(opts.url, opts.outDir, { headless: true }).catch((e) => {
+    console.warn('  ⚠️  appear-effect capture failed:', (e as Error).message);
+  });
   await takeFullScreenshots(page, opts.outDir, opts.viewports);
   // reset to desktop for everything else
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -165,8 +181,23 @@ async function main() {
   const layouts = await extractSectionLayouts(page, sections);
   await writeLayoutArtifacts(opts.outDir, layouts);
 
-  console.log('\n▶ phase 9: hover-state capture (cursor:pointer + buttons/links)');
-  const hovers = await captureHoverStates(page, sections, 5).catch((e) => {
+  console.log('\n▶ phase 9: hover-state capture (page-wide cs-id + React fiber + mouse-section)');
+  // Primary: page-wide cs-id-keyed scan with subtree fingerprint. This is
+  // the most reliable approach — no section caps, no path-selector brittleness.
+  const thoroughHovers = await captureHoversThoroughIsolated(context, opts.url).catch((e) => {
+    console.warn('  ⚠️  thorough hover capture failed:', (e as Error).message);
+    return [];
+  });
+  await writeThoroughHoverArtifacts(opts.outDir, thoroughHovers);
+  // Secondary: React fiber walk for explicit `whileHover` props (works on
+  // sites that don't compile motion away).
+  const fiberHovers = await captureFiberHovers(page).catch((e) => {
+    console.warn('  ⚠️  fiber hover capture failed:', (e as Error).message);
+    return [];
+  });
+  await writeFiberHoverArtifacts(opts.outDir, fiberHovers);
+  // Tertiary: section-scoped mouse-driven scan (legacy, for comparison).
+  const hovers = await captureHoverStates(page, sections, 30).catch((e) => {
     console.warn('  ⚠️  hover capture failed:', (e as Error).message);
     return [];
   });

@@ -1,5 +1,14 @@
 #!/usr/bin/env bash
-# extract-site CLI shim — runs the bun extractor from anywhere.
+# extract-site CLI shim — routes subcommands to the right bun entrypoint.
+#
+# usage:
+#   extract-site <url>                   # full extract (existing behavior)
+#   extract-site init <reference> [...]  # scaffold a customize project from a reference
+#   extract-site build [project] [...]   # run customize.mjs in a project dir
+#   extract-site watch [project]         # watch + rebuild
+#   extract-site help                    # show this list
+
+set -e
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 SKILL_DIR="$( cd "$SCRIPT_DIR/.." && pwd )"
 
@@ -13,10 +22,50 @@ if [ ! -d "$SKILL_DIR/node_modules" ]; then
   (cd "$SKILL_DIR" && bun install)
 fi
 
-# ensure chromium is installed
-if [ ! -d "$HOME/Library/Caches/ms-playwright" ] && [ ! -d "$HOME/.cache/ms-playwright" ]; then
-  echo "🌐 installing Playwright Chromium (first run)…" >&2
-  (cd "$SKILL_DIR" && bunx playwright install chromium)
-fi
+usage() {
+  cat <<EOF
+extract-site — reverse-engineer + customize + rebuild websites
 
-exec bun "$SKILL_DIR/src/extract.ts" "$@"
+usage:
+  extract-site <url>                       full extract → reference/<slug>/
+  extract-site init <reference> [opts]     scaffold a customize project from a reference
+                                           (preserves the framer mirror; swap text/colors/images)
+  extract-site rebuild <reference> [opts]  scaffold an EDITABLE react+vite project from a reference
+                                           (each section becomes a real component you can edit)
+  extract-site build [project] [--strict]  run customize.mjs in a project dir (default: cwd)
+  extract-site watch [project]             watch + rebuild on changes
+  extract-site help                        show this message
+
+extract → init → build is the full lifecycle: rip a site, scaffold an editable
+project from it, and rebuild on every config change. for indistinguishable
+visual fidelity, keep the original mirror as your output target — never rebuild
+the dom by hand. see SKILL.md for details.
+EOF
+}
+
+cmd="${1:-}"
+
+case "$cmd" in
+  ""|help|--help|-h)
+    usage
+    exit 0
+    ;;
+  init)
+    exec bun "$SKILL_DIR/src/cmd-init.ts" "$@"
+    ;;
+  build|watch)
+    exec bun "$SKILL_DIR/src/cmd-build.ts" "$@"
+    ;;
+  rebuild)
+    exec bun "$SKILL_DIR/src/cmd-rebuild.ts" "$@"
+    ;;
+  *)
+    # default: treat first arg as a URL → existing extract behavior.
+    # ensure chromium is installed lazily, only for extraction (not init/build).
+    if [ ! -d "$HOME/Library/Caches/ms-playwright" ] && [ ! -d "$HOME/.cache/ms-playwright" ]; then
+      echo "🌐 installing Playwright Chromium (first run, ~30-90s, ~150MB)…" >&2
+      (cd "$SKILL_DIR" && bunx playwright install chromium)
+    fi
+    exec bun "$SKILL_DIR/src/extract.ts" "$@"
+    ;;
+esac

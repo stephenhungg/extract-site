@@ -1,0 +1,3 @@
+{
+  "_comment": "Source-of-truth strings as shipped by the unmodified mirror. customize.mjs uses these as the FIND side of every replacement. config.json fields with matching paths become the REPLACE side. Edit by hand or auto-populate via `extract-site init`."
+}

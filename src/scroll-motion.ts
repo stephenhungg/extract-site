@@ -29,6 +29,7 @@ export type ScrollBehaviorKind =
 
 export interface ScrollBehavior {
   selector: string;
+  csId?: string;          // matches data-cs-id from computed-styles.ts (for runtime element lookup)
   framerName?: string;
   tag: string;
   kind: ScrollBehaviorKind[];
@@ -77,9 +78,12 @@ export async function captureScrollLinkedMotion(
   page: Page,
   sections: SectionInfo[]
 ): Promise<{ behaviors: ScrollBehavior[]; sectionBgColors: Map<string, string> }> {
-  // 1. Tag interesting elements with stable ids, return their selectors.
-  const candidateSelectors: string[] = await page.evaluate(() => {
-    const out: string[] = [];
+  // 1. Tag interesting elements with stable ids, return their selectors AND
+  // the data-cs-id that the prior captureComputedStyles pass already assigned.
+  // The cs-id is the durable identifier the rebuild's runtime uses to find
+  // the element in the rendered DOM (data-esi-sm gets stripped after capture).
+  const candidates: Array<{ sel: string; csId: string | null }> = await page.evaluate(() => {
+    const out: Array<{ sel: string; csId: string | null }> = [];
     let n = 0;
     const seen = new Set<Element>();
     const add = (el: Element) => {
@@ -90,11 +94,9 @@ export async function captureScrollLinkedMotion(
       seen.add(el);
       const id = `__esi-sm-${n++}`;
       (el as HTMLElement).dataset.esiSm = id;
-      out.push(`[data-esi-sm="${id}"]`);
+      out.push({ sel: `[data-esi-sm="${id}"]`, csId: el.getAttribute('data-cs-id') });
     };
-    // Tag every framer-named element (these are the "story beats" of the page)
     document.querySelectorAll('[data-framer-name]').forEach(add);
-    // Plus sections, h1/h2, large images/videos, anything with sticky position.
     document.querySelectorAll('section, header, nav, footer, h1, h2, picture, video, img').forEach(add);
     document.querySelectorAll('*').forEach((el) => {
       if (out.length > 600) return;
@@ -103,6 +105,9 @@ export async function captureScrollLinkedMotion(
     });
     return out;
   });
+  const candidateSelectors = candidates.map((c) => c.sel);
+  const selToCsId = new Map<string, string | null>();
+  for (const c of candidates) selToCsId.set(c.sel, c.csId);
 
   // 2. Sample at strided scroll positions across the document.
   const { totalH, vpH } = await page.evaluate(() => ({
@@ -195,6 +200,11 @@ export async function captureScrollLinkedMotion(
 
   // 5. Classify behaviors
   const behaviors = classifyScrollBehaviors(samples, sections);
+  // 5b. Stamp each behavior with its cs-id for runtime element lookup
+  for (const b of behaviors) {
+    const csId = selToCsId.get(b.selector);
+    if (csId) b.csId = csId;
+  }
   return { behaviors, sectionBgColors };
 }
 
@@ -279,9 +289,24 @@ function classifyScrollBehaviors(samples: RawSample[], sections: SectionInfo[]):
     const hasRot = rotRange > 2;
     const hasOpacity = opRange > 0.1;
 
+    // parallax is the most over-detected kind: framer's runtime applies
+    // transforms to many wrappers (sections, "Variant 1" containers, etc).
+    // tightening to "true decorations": named decorative element OR small
+    // bbox + named at all. structural unnamed wrappers and big section
+    // roots get dropped — they have no business being parallax-driven and
+    // moving them breaks layout in the rebuild.
+    const fname = visible[0].e.framerName ?? '';
+    const bboxArea = visible[0].e.width * visible[0].e.height;
+    const STRUCTURAL_NAMES = /^(Variant\s*\d+|Main|Intro\s*Content|Name\s*(&|and)\s*(Intro|picture)|With\s*Decoration|Desktop\s*\(?Decoration\)?|Phone\s*\(?Decoration\)?|Service\s*list|List\s*item|Title|Text|Link\s*Text|Link\s*Grid\s*Phone|Social\s*Icon\s*Grid\s*Phone|Phone\s*\(Grid\)|Phone)$/i;
+    const DECORATIVE_NAMES = /^(Tape|Blue\s*tape|Tape\s*blue|Paperclip|Staple|Sticker|Polaroid|Polaroid\s*Phone|Photo|Picture|Profile\s*Shot|Corner|Shadow|noise|Decoration|Cutting\s*Board)$/i;
+    const isStructural = STRUCTURAL_NAMES.test(fname);
+    const isDecorative = DECORATIVE_NAMES.test(fname);
+    const isHuge = bboxArea > 200000;  // ~450x450 — basically a section
+    const allowParallax = isParallax && !isStructural && !isHuge && (isDecorative || (fname && bboxArea < 100000));
+
     if (isPinned && (hasScale || hasTx || hasTy || hasOpacity)) kinds.push('pin-scrub');
     else if (isPinned) kinds.push('pinned');
-    else if (isParallax) kinds.push('parallax');
+    else if (allowParallax) kinds.push('parallax');
     if (hasScale && !kinds.includes('pin-scrub')) kinds.push('scroll-scaled');
     if ((hasTx || hasTy) && !kinds.includes('pin-scrub') && !kinds.includes('parallax')) {
       kinds.push('scroll-translated');

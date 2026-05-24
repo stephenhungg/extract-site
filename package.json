@@ -10,9 +10,10 @@
     "extract": "bun src/extract.ts"
   },
   "dependencies": {
+    "cheerio": "^1.2.0",
+    "culori": "^4.0.1",
     "playwright": "^1.48.0",
-    "sharp": "^0.33.5",
-    "culori": "^4.0.1"
+    "sharp": "^0.33.5"
   },
   "devDependencies": {
     "@types/bun": "latest",

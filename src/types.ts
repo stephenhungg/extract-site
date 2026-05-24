@@ -92,6 +92,9 @@ export interface HoverState {
   transition?: string;
   duration?: string;
   easing?: string;
+  // cs-id of the element that ACTUALLY changed (often a descendant of selector
+  // — framer's whileHover lands on a child like a chevron icon, not the link)
+  targetCsId?: string;
 }
 
 export interface DetectedStack {

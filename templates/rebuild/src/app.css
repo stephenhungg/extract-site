@@ -1,0 +1,12 @@
+/* app.css — your overrides go here.
+   framer-baseline.css is imported FIRST in main.tsx so anything you
+   write here wins via cascade order. */
+
+html, body {
+  margin: 0;
+  padding: 0;
+}
+
+#root {
+  min-height: 100dvh;
+}

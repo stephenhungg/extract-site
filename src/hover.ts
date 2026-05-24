@@ -140,6 +140,24 @@ export async function captureHoverStates(
           // adds transitions dynamically when whileHover triggers, so the
           // resting state often shows transition: none. We hover everything
           // and only record entries where the after-state actually differs.
+          // Snapshot SUBTREE styles by data-cs-id (set in phase 3). Framer
+          // often binds whileHover at a parent but the visual effect (scale,
+          // shadow, color shift) lands on a descendant. capturing the
+          // subtree by cs-id lets the after-pass diff per-element to find
+          // exactly which child changed and record that as the hover target.
+          const subtreeBefore: Record<string, Record<string, string>> = {};
+          const walkSub = (n: Element, depth: number) => {
+            if (depth > 5) return;
+            const cid = (n as HTMLElement).dataset?.csId;
+            if (cid) {
+              const ncs = getComputedStyle(n);
+              const snap: Record<string, string> = {};
+              for (const pp of props) snap[pp] = (ncs as any)[pp];
+              subtreeBefore[cid] = snap;
+            }
+            for (const child of Array.from(n.children)) walkSub(child, depth + 1);
+          };
+          walkSub(el, 0);
           result.push({
             selector: sel,
             framerName: (el as HTMLElement).dataset?.framerName,
@@ -159,6 +177,7 @@ export async function captureHoverStates(
               framerName: pointerAncestorFramerName,
               before: pointerAncestorBefore!,
             } : undefined,
+            subtreeBefore,
           });
         }
         return result;
@@ -186,7 +205,7 @@ export async function captureHoverStates(
       await page.mouse.move(cxCxCy.cx, cxCxCy.cy, { steps: 4 });
       await page.waitForTimeout(450);
 
-      const afterPair: { el: Record<string, string> | null; ancestor: Record<string, string> | null } = await page.evaluate(
+      const afterPair: { el: Record<string, string> | null; ancestor: Record<string, string> | null; subtree: Record<string, Record<string, string>> } = await page.evaluate(
         ({ sel, ancestorSel, props }) => {
           const grab = (s: string) => {
             const el = document.querySelector(s);
@@ -196,7 +215,23 @@ export async function captureHoverStates(
             for (const p of props) out[p] = (cs as any)[p];
             return out;
           };
-          return { el: grab(sel), ancestor: ancestorSel ? grab(ancestorSel) : null };
+          const root = document.querySelector(sel);
+          const subtree: Record<string, Record<string, string>> = {};
+          if (root) {
+            const walk = (n: Element, d: number) => {
+              if (d > 5) return;
+              const cid = (n as HTMLElement).dataset?.csId;
+              if (cid) {
+                const cs = getComputedStyle(n);
+                const snap: Record<string, string> = {};
+                for (const p of props) snap[p] = (cs as any)[p];
+                subtree[cid] = snap;
+              }
+              for (const c of Array.from(n.children)) walk(c, d + 1);
+            };
+            walk(root, 0);
+          }
+          return { el: grab(sel), ancestor: ancestorSel ? grab(ancestorSel) : null, subtree };
         },
         { sel: c.selector, ancestorSel: (c as any).ancestor?.selector || null, props: TRACKED_PROPS }
       );
@@ -219,9 +254,44 @@ export async function captureHoverStates(
         }
       }
 
-      // Prefer ancestor delta on framer pages — that's where the hover is
-      // actually bound. Fall back to element delta if no ancestor or no change.
-      if (Object.keys(ancestorDelta).length > 0) {
+      // Subtree diff: framer's whileHover often visually lands on a
+      // descendant (chevron icon, image, label) rather than the hover
+      // target itself. compare per-cs-id snapshots to find the changed
+      // child and emit a hover spec keyed by its cs-id.
+      const subtreeBeforeMap = (c as any).subtreeBefore as Record<string, Record<string, string>> | undefined;
+      const subtreeAfter = afterPair.subtree;
+      const subtreeHits: Array<{ csId: string; delta: Record<string, { from: string; to: string }> }> = [];
+      if (subtreeBeforeMap) {
+        for (const [cid, before] of Object.entries(subtreeBeforeMap)) {
+          const after = subtreeAfter[cid];
+          if (!after) continue;
+          const delta: Record<string, { from: string; to: string }> = {};
+          for (const p of TRACKED_PROPS) {
+            if (before[p] !== after[p]) delta[p] = { from: before[p], to: after[p] };
+          }
+          if (Object.keys(delta).length > 0) subtreeHits.push({ csId: cid, delta });
+        }
+      }
+
+      if (subtreeHits.length > 0) {
+        // emit one hover entry per descendant that changed; keep the
+        // hover-target selector + bbox so the runtime knows where to bind.
+        for (const hit of subtreeHits) {
+          out.push({
+            selector: c.selector,
+            framerName: c.framerName,
+            sectionSlug: section.slug,
+            bbox: c.bbox,
+            text: c.text || undefined,
+            delta: hit.delta,
+            transition: c.transition,
+            duration: c.duration,
+            easing: c.easing,
+            // tag the descendant whose styles change — that's what gets animated
+            targetCsId: hit.csId,
+          } as any);
+        }
+      } else if (Object.keys(ancestorDelta).length > 0) {
         out.push({
           selector: ancestor.selector,
           framerName: ancestor.framerName,

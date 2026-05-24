@@ -1,0 +1,16 @@
+{
+  "name": "PROJECT_NAME",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node customize.mjs",
+    "build:strict": "node customize.mjs --strict",
+    "watch": "node customize.mjs --watch",
+    "serve": "python3 -m http.server 4188 --directory dist"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "cheerio": "^1.2.0",
+    "chokidar": "^5.0.0"
+  }
+}
