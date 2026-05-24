@@ -238,7 +238,7 @@ async function main() {
     assetCount: assets.manifest.length,
   };
   await writeFile(join(opts.outDir, 'meta.json'), JSON.stringify(meta, null, 2), 'utf8');
-  await writeRebuildMd(opts.outDir, meta, sections, sectionContents, sectionMotion, hovers, scrollBehaviors, sectionBgColors, transitions);
+  await writeRebuildMd(opts.outDir, meta, sections, sectionContents, sectionMotion, hovers, scrollBehaviors, sectionBgColors, transitions, augmentedManifest);
 
   await context.close();
   await browser.close();

@@ -1,6 +1,6 @@
 import { writeFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
-import type { Meta, SectionInfo, DetectedStack, HoverState } from './types.ts';
+import type { Meta, SectionInfo, DetectedStack, HoverState, AssetManifestEntry } from './types.ts';
 import type { SectionContent } from './content.ts';
 import type { SectionMotionSummary } from './motion.ts';
 import type { ScrollBehavior } from './scroll-motion.ts';
@@ -15,10 +15,24 @@ export async function writeRebuildMd(
   hovers: HoverState[] = [],
   scrollBehaviors: ScrollBehavior[] = [],
   sectionBgColors: Map<string, string> = new Map(),
-  transitions: TransitionSpec[] = []
+  transitions: TransitionSpec[] = [],
+  manifest: AssetManifestEntry[] = []
 ) {
   const stack = meta.stack;
   const recommended = recommendedStack(stack);
+
+  // Resolve an original asset URL to its actual on-disk path. extract-site saves
+  // assets with an 8-char hash prefix and the magic-byte-detected extension
+  // (e.g. a `.png` URL whose bytes are avif becomes `<hash>-name.avif`), so the
+  // bare original filename does NOT exist on disk. Without this, every image
+  // path in REBUILD.md would 404 a rebuild. localPath is relative to outDir.
+  const byUrl = new Map(manifest.map((m) => [m.originalUrl, m]));
+  const resolveAsset = (src: string): string | null => {
+    const entry = byUrl.get(src) ?? byUrl.get(src.split('?')[0]);
+    if (!entry) return null;
+    // normalize to a reference-relative path like `assets/images/<hash>-name.avif`
+    return entry.localPath.replace(/^.*?(assets\/)/, '$1');
+  };
 
   const lines: string[] = [];
   lines.push(`# REBUILD.md`);
@@ -44,17 +58,18 @@ export async function writeRebuildMd(
   lines.push(`├── screenshots/sections/      # per-section, per-viewport`);
   lines.push(`├── motion/animations.json     # raw capture`);
   lines.push(`├── motion/motion-specs.md     # ★ READ THIS — durations + easings`);
-  lines.push(`├── assets/{images,videos,fonts}/  # everything harvested`);
-  lines.push(`├── assets/manifest.json       # original urls -> local paths`);
+  lines.push(`├── assets/{images,videos,fonts}/  # everything harvested (hash-prefixed names)`);
+  lines.push(`├── assets/manifest.json       # original urls -> on-disk local paths`);
   lines.push(`├── tokens/{colors,typography,spacing}.json`);
   lines.push(`├── tokens/tokens.css          # ready-to-import css vars`);
+  lines.push(`├── tokens/fonts.css           # @font-face for captured fonts`);
   lines.push(`└── stack/detected.md          # framework detection notes`);
   lines.push(`\`\`\`\n`);
 
   lines.push(`## Rules of engagement (95%+ fidelity required)\n`);
   lines.push(`This is a **1:1 reproduction**, not a "spiritually similar" rebuild. Concrete rules:\n`);
   lines.push(`1. **Use the actual text.** Every headline, paragraph, button label, link is in \`content/text.md\` and \`content/sections.json\`. Do not paraphrase, do not "improve" copy, do not make up filler.`);
-  lines.push(`2. **Use the actual images.** Each image's role and target file is in the section blocks above. Copy from \`assets/images/\` into your project's \`public/\` and reference by the same filename. If a section has a hero image, your section MUST have that exact image — not a CSS gradient stand-in.`);
+  lines.push(`2. **Use the actual images.** Each section block below lists the **exact on-disk path** for every image (hash-prefixed, with the real detected extension — e.g. \`assets/images/930cdbce-name.avif\`). Copy those files into your project's \`public/\` and reference them. The bare original filenames do NOT exist on disk; use the paths as written, or \`assets/manifest.json\` (\`originalUrl\` → \`localPath\`) to resolve. If a section has a hero image, your section MUST have that exact image — not a CSS gradient stand-in.`);
   lines.push(`3. **Use the actual fonts.** \`tokens/fonts.css\` has \`@font-face\` declarations for every captured woff2/ttf. Import it. Don't substitute Google Fonts unless the source font wasn't captured.`);
   lines.push(`4. **For motion: EXACT values from \`motion/motion-specs.md\`.** No "ease-out", no "0.5s". Use the bezier arrays and durations as captured.`);
   lines.push(`5. **For tokens: import \`tokens/tokens.css\`.** Don't pick new colors, font sizes, or spacing values.`);
@@ -192,24 +207,27 @@ export async function writeRebuildMd(
     if (c.images.length) {
       lines.push(`\n**Images (${c.images.length}):**`);
       for (const img of c.images.slice(0, 8)) {
-        const local = img.src.split('/').pop()?.split('?')[0];
+        const path = resolveAsset(img.src);
+        const ref = path ? `\`${path}\`` : `(not harvested — fetch from source: ${img.src})`;
         lines.push(
-          `- \`${local}\` — ${img.role}, ${img.bbox.width}×${img.bbox.height}${img.alt ? ` — alt: "${img.alt}"` : ''} → \`assets/images/${local}\``
+          `- ${img.role}, ${img.bbox.width}×${img.bbox.height}${img.alt ? ` — alt: "${img.alt}"` : ''} → ${ref}`
         );
       }
     }
     if (c.videos.length) {
       lines.push(`\n**Videos:**`);
       for (const v of c.videos) {
-        const local = v.src.split('/').pop()?.split('?')[0];
-        lines.push(`- \`${local}\` — ${v.bbox.width}×${v.bbox.height} → \`assets/videos/${local}\``);
+        const path = resolveAsset(v.src);
+        const ref = path ? `\`${path}\`` : `(not harvested — fetch from source: ${v.src})`;
+        lines.push(`- ${v.bbox.width}×${v.bbox.height} → ${ref}`);
       }
     }
     if (c.backgrounds.length) {
       lines.push(`\n**CSS background-image urls:**`);
       for (const b of c.backgrounds.slice(0, 5)) {
-        const local = b.url.split('/').pop()?.split('?')[0];
-        lines.push(`- on \`${b.selector}\`: \`${local}\``);
+        const path = resolveAsset(b.url);
+        const ref = path ? `\`${path}\`` : `(not harvested — fetch from source: ${b.url})`;
+        lines.push(`- on \`${b.selector}\`: ${ref}`);
       }
     }
     if (c.svgs.length) {

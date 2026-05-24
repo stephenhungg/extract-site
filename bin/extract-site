@@ -24,22 +24,23 @@ fi
 
 usage() {
   cat <<EOF
-extract-site — reverse-engineer + customize + rebuild websites
+extract-site — reverse-engineer a site, then rebuild it clean
 
 usage:
-  extract-site <url>                       full extract → reference/<slug>/
-  extract-site init <reference> [opts]     scaffold a customize project from a reference
-                                           (preserves the framer mirror; swap text/colors/images)
+  extract-site <url>                       full extract → reference/<slug>/  (HEADED — never --headless)
   extract-site rebuild <reference> [opts]  scaffold an EDITABLE react+vite project from a reference
                                            (each section becomes a real component you can edit)
-  extract-site build [project] [--strict]  run customize.mjs in a project dir (default: cwd)
-  extract-site watch [project]             watch + rebuild on changes
   extract-site help                        show this message
 
-extract → init → build is the full lifecycle: rip a site, scaffold an editable
-project from it, and rebuild on every config change. for indistinguishable
-visual fidelity, keep the original mirror as your output target — never rebuild
-the dom by hand. see SKILL.md for details.
+  probe.mjs <originalUrl> <rebuildUrl>     verify rebuild fidelity vs the LIVE site
+  motion-probe.mjs <url>                   capture scroll-keyframe motion
+
+extract → rebuild → verify is the workflow: rip a site into reference/, rebuild it
+as clean editable code, then diff against the live URL with probe.mjs. Read
+PLAYBOOK.md for the full method. Do NOT mirror Framer's runtime — dead end.
+
+deprecated (mirror/customize path, avoid — kept only for back-compat):
+  extract-site init|build|watch            string-swap into Framer's runtime
 EOF
 }
 
